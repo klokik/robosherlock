@@ -18,10 +18,10 @@
 using namespace uima;
 
 
-class TransparentSegmentator : public DrawingAnnotator
+class TransparentSegmentationAnnotator : public DrawingAnnotator
 {
 public:
-  TransparentSegmentator(): DrawingAnnotator(__func__) {
+  TransparentSegmentationAnnotator(): DrawingAnnotator(__func__) {
 
   }
 
@@ -280,4 +280,4 @@ private:
 };
 
 // This macro exports an entry point that is used to create the annotator.
-MAKE_AE(TransparentSegmentator)
+MAKE_AE(TransparentSegmentationAnnotator)

@@ -2,9 +2,9 @@
 <taeDescription xmlns="http://uima.apache.org/resourceSpecifier">
   <frameworkImplementation>org.apache.uima.cpp</frameworkImplementation>
   <primitive>true</primitive>
-  <annotatorImplementationName>rs_transparentSegmentator</annotatorImplementationName>
+  <annotatorImplementationName>rs_transparentSegmentationAnnotator</annotatorImplementationName>
   <analysisEngineMetaData>
-    <name>TransparentSegmentator</name>
+    <name>TransparentSegmentationAnnotator</name>
     <description/>
     <version>1.0</version>
     <vendor/>
