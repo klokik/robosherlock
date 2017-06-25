@@ -20,26 +20,6 @@ using namespace uima;
 
 class TransparentSegmentator : public DrawingAnnotator
 {
-private:
-  int open_iterations = 6;
-  int close_iterations = 12;
-  int gc_erode_iterations = 6;
-  int gc_dilate_iterations = 12;
-  int grabcut_iterations = 2;
-  int morph_kernel_size = 3;
-  bool convex_hull_segments = false;
-  int min_contour_area = 100;
-
-  cv::Mat image_rgb;
-  cv::Mat image_depth;
-  cv::Mat viz_image;
-
-  cv::Mat cameraMatrix = cv::Mat(3, 3, CV_64F);
-  cv::Mat distCoefficients = cv::Mat(1, 8, CV_64F);
-
-  std::vector<ImageSegmentation::Segment> segments;
-
-
 public:
   TransparentSegmentator(): DrawingAnnotator(__func__) {
 
@@ -57,8 +37,6 @@ public:
     ctx.extractValue("morph_kernel_size", morph_kernel_size);
     ctx.extractValue("convex_hull_segments", convex_hull_segments);
     ctx.extractValue("min_contour_area", min_contour_area);
-
-    viz_image = cv::Mat::zeros(480, 640, CV_8UC3);
 
     return UIMA_ERR_NONE;
   }
@@ -111,6 +89,8 @@ public:
 
       cv::Mat planeMask = getPlaneMaskClosed(plane, camInfo); 
 
+      search_mask = planeMask;
+
       // TODO: use raw depth mask - the one before ImagePreprocessor
       cv::Mat depth_failed_mask = (image_depth == 255) & planeMask;
 
@@ -143,7 +123,10 @@ protected:
   using Contour = std::vector<cv::Point>;
 
   virtual void drawImageWithLock(cv::Mat &disp) override {
-    disp = image_rgb*0.3;
+    cv::Mat mask;
+    cv::cvtColor(search_mask, mask, CV_GRAY2BGR);
+
+    disp = image_rgb.mul(mask, 0.2/255)+image_rgb*0.3;
     ImageSegmentation::drawSegments2D(disp, segments, {});
   }
 
@@ -275,6 +258,25 @@ protected:
       *it = camInfo.D[i];
     }
   }
+
+private:
+  int open_iterations = 6;
+  int close_iterations = 12;
+  int gc_erode_iterations = 6;
+  int gc_dilate_iterations = 12;
+  int grabcut_iterations = 2;
+  int morph_kernel_size = 3;
+  bool convex_hull_segments = false;
+  int min_contour_area = 100;
+
+  cv::Mat image_rgb;
+  cv::Mat image_depth;
+  cv::Mat search_mask;
+
+  cv::Mat cameraMatrix = cv::Mat(3, 3, CV_64F);
+  cv::Mat distCoefficients = cv::Mat(1, 8, CV_64F);
+
+  std::vector<ImageSegmentation::Segment> segments;
 };
 
 // This macro exports an entry point that is used to create the annotator.
