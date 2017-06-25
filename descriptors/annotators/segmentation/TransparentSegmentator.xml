@@ -124,7 +124,7 @@
     </configurationParameterSettings>
     <typeSystemDescription>
         <imports>
-            <import location="../typesystem/all_types.xml"/>
+            <import location="../../typesystem/all_types.xml"/>
         </imports>
     </typeSystemDescription>
     <capabilities>
