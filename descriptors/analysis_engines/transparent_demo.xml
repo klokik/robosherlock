@@ -165,9 +165,6 @@
       <node>NormalEstimator</node>
       <node>PlaneAnnotator</node>
       <node>TransparentSegmentationAnnotator</node>
-      <node>PointCloudClusterExtractor</node>
-      <node>ClusterMerger</node>
-      <node>ImageSegmentationAnnotator</node>
       </fixedFlow>
     </flowConstraints>
     <typePriorities/>
