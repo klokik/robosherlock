@@ -220,6 +220,13 @@ public:
       outInfo("\tSilhouette of " << silhouette.size() << " points");
 
       // try to fit silhouette
+      std::string model_name;
+      size_t pose_index;
+      double fitness;
+
+      std::tie(model_name, pose_index, fitness) = getBestFitnessResult(silhouette);
+
+      outInfo("\tProbably it is " << model_name << "; score: " << fitness);
     }
 
     outInfo("took: " << clock.getTime() << " ms.");
@@ -548,6 +555,27 @@ protected:
     auto fitted__score = fitICP(na, nb);
 
     return fitted__score.second;
+  }
+
+  std::tuple<std::string, size_t, double> getBestFitnessResult(const Silhouette &shape) {
+    std::string best_model_name;
+    size_t best_pose_index{0};
+    double best_fitness_score{std::numeric_limits<double>::max()};
+
+    for (const auto &kv : this->edge_models) {
+      for (auto it = kv.second.items.cbegin(); it != kv.second.items.cend(); it = std::next(it)) {
+        // outInfo("pose " << std::distance(kv.second.items.cbegin(), it));
+        auto score = getFitnessScore(shape, it->contour);
+
+        if (score < best_fitness_score) {
+          best_fitness_score = score;
+          best_model_name = kv.first;
+          best_pose_index = std::distance(kv.second.items.cbegin(), it);
+        }
+      }
+    }
+
+    return std::tuple<std::string, size_t, double>{best_model_name, best_pose_index, best_fitness_score};
   }
 
 private:
