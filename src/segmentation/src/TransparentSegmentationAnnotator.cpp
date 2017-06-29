@@ -120,7 +120,16 @@ public:
           cv::Rect(0, 0, refined_mask.cols, refined_mask.rows));
       ImageSegmentation::computePose(segments, cameraMatrix, distCoefficients, planeNormal, planeDistance);
 
-      // TODO: add appropriate annotations, based on segments
+      // add appropriate annotations, based on segments
+      for (auto &segment : this->segments) {
+        rs::TransparentSegment tSegment = rs::create<rs::TransparentSegment>(tcas);
+
+        tSegment.segment.set(rs::conversion::to(tcas, segment));
+        tSegment.maxSurfaceDepth.set(0); // TODO: get valid max surf depth
+        tSegment.source.set("TransparentSegmentation");
+
+        scene.identifiables.append(tSegment);
+      }
     }
 
     return UIMA_ERR_NONE;
