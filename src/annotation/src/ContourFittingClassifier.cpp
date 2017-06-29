@@ -183,23 +183,10 @@ public:
     return UIMA_ERR_NONE;
   }
 
-  // TyErrorId process(CAS &tcas, ResultSpecification const &res_spec)
-  // {
-  //   outInfo("process start");
-  //   rs::StopWatch clock;
-  //   rs::SceneCas cas(tcas);
-  //   pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloud_ptr(new pcl::PointCloud<pcl::PointXYZRGBA>);
-  //   outInfo("Cache path =  " << cache_path);
-  //   cas.get(VIEW_CLOUD,*cloud_ptr);
-
-  //   outInfo("Cloud size: " << cloud_ptr->points.size());
-  //   outInfo("took: " << clock.getTime() << " ms.");
-  //   return UIMA_ERR_NONE;
-  // }
-
   TyErrorId processWithLock(CAS &tcas, ResultSpecification const &res_spec) override
   {
     outInfo("process start");
+    rs::StopWatch clock;
     rs::SceneCas cas(tcas);
 
     rs::Scene scene = cas.getScene();
@@ -224,6 +211,7 @@ public:
       // try to fit silhouette
     }
 
+    outInfo("took: " << clock.getTime() << " ms.");
     return UIMA_ERR_NONE;
   }
 
