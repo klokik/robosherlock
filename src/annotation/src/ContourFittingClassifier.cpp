@@ -6,7 +6,16 @@
 #include <ros/ros.h>
 #include <ros/package.h>
 
+#define PCL_SEGFAULT_WORKAROUND 1
+
 #include <pcl/point_types.h>
+
+#if !PCL_SEGFAULT_WORKAROUND
+#include <pcl/registration/icp.h>
+#else
+#include "libicp/src/icpPointToPoint.h"
+#endif
+
 #include <rs/types/all_types.h>
 //RS
 #include <rs/scene_cas.h>
@@ -30,6 +39,8 @@ struct Pose {
 
 using Silhouette = std::vector<cv::Point2i>;
 using Silhouettef = std::vector<cv::Point2f>;
+
+cv::Point2f operator*(cv::Mat &M, const cv::Point2f &pt);
 
 struct Footprint {
   cv::Mat img;
@@ -414,6 +425,131 @@ protected:
     return {footprint, contours[0], pose};
   }
 
+  static ::Silhouettef normalizeSilhouette(const ::Silhouette &shape) {
+    ::Silhouettef result;
+    for (const auto &pt : shape)
+      result.push_back(pt);
+
+    cv::Point2f mean = std::accumulate(shape.cbegin(), shape.cend(), cv::Point2i());
+    mean *= (1.f / shape.size());
+
+    float std_dev = 0;
+
+    for (auto &pt : result) {
+      pt = pt - mean;
+      std_dev += std::pow(cv::norm(pt), 2);
+    }
+
+    std_dev = std::sqrt(std_dev / shape.size());
+
+    for (auto &pt : result)
+      pt *= 1.f / std_dev;
+
+    return result;
+  }
+
+#if !PCL_SEGFAULT_WORKAROUND
+  static void silhouetteToPC(::Silhouettef &sil, pcl::PointCloud<pcl::PointXYZ> &pc) {
+    pc.width = sil.size();
+    pc.height = 1;
+    pc.is_dense = false;
+
+    pc.resize(pc.width * pc.height);
+
+    for (size_t i = 0; i < sil.size(); ++i) {
+      pc.points[i] = {sil[i].x, sil[i].y, 0};
+    }
+  }
+
+  static void PCToSilhouette(pcl::PointCloud<pcl::PointXYZ> &pc, ::Silhouettef &sil) {
+    sil.clear();
+
+    assert(pc.height == 1);
+
+    for (size_t i = 0; i < pc.width; ++i) {
+      sil.push_back(cv::Point2f(pc.points[i].x, pc.points[i].y));
+    }
+  }
+
+  static std::pair<::Silhouettef, double> fitICP(::Silhouettef &test, ::Silhouettef &model) {
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cl_test(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cl_model(new pcl::PointCloud<pcl::PointXYZ>);
+
+    silhouetteToPC(test, *cl_test);
+    silhouetteToPC(model, *cl_model);
+
+    pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
+    icp.setInputSource(cl_test);
+    icp.setInputTarget(cl_model);
+
+    pcl::PointCloud<pcl::PointXYZ> cl_result;
+
+    icp.align(cl_result);
+
+    assert(icp.hasConverged());
+
+    double score = icp.getFitnessScore();
+
+    ::Silhouettef result;
+    PCToSilhouette(cl_result, result);
+
+    return {result, score};
+  }
+
+#else
+
+  static std::pair<::Silhouettef, double> fitICP(::Silhouettef &test, ::Silhouettef &model) {
+
+    std::vector<double> test_arr;
+    std::vector<double> model_arr;
+
+    for (auto &pt : test) {
+      test_arr.push_back(pt.x);
+      test_arr.push_back(pt.y);
+    }
+
+    for (auto &pt : model) {
+      model_arr.push_back(pt.x);
+      model_arr.push_back(pt.y);
+    }
+
+    int dim = 2; // 2D
+
+    Matrix rot = Matrix::eye(2); // libipc matrix
+    Matrix trans(2,1);           // libipc matrix
+
+    IcpPointToPoint icp(&test_arr[0], test.size(), dim);
+    double score = icp.fit(&model_arr[0], model.size(), rot, trans, -1);
+
+    cv::Mat cv_trf(3, 3, CV_64FC1, cv::Scalar(0.f));
+    cv_trf.at<double>(0, 0) = rot.val[0][0];
+    cv_trf.at<double>(0, 1) = rot.val[1][0];
+    cv_trf.at<double>(1, 0) = rot.val[0][1];
+    cv_trf.at<double>(1, 1) = rot.val[1][1];
+
+    cv_trf.at<double>(0, 2) = 0; //trans.val[0][0];
+    cv_trf.at<double>(1, 2) = 0; //trans.val[1][0];
+    cv_trf.at<double>(2, 2) = 1.f;
+
+    ::Silhouettef result;
+    for (const auto &pt : test) {
+      cv::Point2f ptf = pt;
+      result.push_back(cv_trf * std::ref(ptf));
+    }
+
+    return {result, score};
+  }
+#endif
+
+  static double getFitnessScore(const ::Silhouette &a, const ::Silhouette &b) {
+    ::Silhouettef na = normalizeSilhouette(a);
+    ::Silhouettef nb = normalizeSilhouette(b);
+
+    auto fitted__score = fitICP(na, nb);
+
+    return fitted__score.second;
+  }
+
 private:
   std::string cache_path{"/tmp"};
   int rotation_axis_samples{10};
@@ -427,6 +563,18 @@ private:
 
   ::Camera silhouette_camera;
 };
+
+cv::Point2f operator*(cv::Mat &M, const cv::Point2f &pt) {
+  cv::Mat_<double> vec(3, 1);
+
+  vec(0, 0) = pt.x;
+  vec(1, 0) = pt.y;
+  vec(2, 0) = 1.f;
+
+  cv::Mat_<double> dst = M*vec;
+
+  return cv::Point2f(dst(0, 0), dst(1, 0));
+}
 
 // This macro exports an entry point that is used to create the annotator.
 MAKE_AE(ContourFittingClassifier)
