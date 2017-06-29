@@ -202,8 +202,27 @@ public:
     outInfo("process start");
     rs::SceneCas cas(tcas);
 
-    outInfo("Cache path =  " << cache_path);
+    rs::Scene scene = cas.getScene();
+    std::vector<rs::TransparentSegment> t_segments;
+    scene.identifiables.filter(t_segments);
 
+    outInfo("Found " << t_segments.size() << " transparent segments");
+
+    for (auto &t_segment : t_segments) {
+      rs::Segment segment = t_segment.segment.get();
+
+      Silhouette silhouette;
+      for (auto &rs_pt : segment.contour.get()) {
+        cv::Point2i cv_pt;
+        rs::conversion::from(rs_pt, cv_pt);
+
+        silhouette.push_back(cv_pt);
+      }
+
+      outInfo("\tSilhouette of " << silhouette.size() << " points");
+
+      // try to fit silhouette
+    }
 
     return UIMA_ERR_NONE;
   }
