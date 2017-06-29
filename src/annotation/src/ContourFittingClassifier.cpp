@@ -139,19 +139,31 @@ public:
 
     for (auto &fname : filenames) {
       try {
-        auto training_mesh = readTrainingMesh(*fname);
+        EdgeModel edge_model;
 
-        ::EdgeModel edge_model;
-        edge_model = getSampledFootprints(
-          training_mesh,
-          silhouette_camera,
-          silhouette_image_size,
-          silhouette_margin_size,
-          rotation_axis_samples,
-          rotation_angle_samples,
-          translation_samples);
+        bool cached;
+        std::string cache_filename = this->cache_path + fname->substr(fname->rfind('/')) + ".txt";
+        outInfo("Cache name " << cache_filename);
+
+        if (!(cached = edge_model.loadFromFile(cache_filename))) {
+          auto training_mesh = readTrainingMesh(*fname);
+          edge_model = getSampledFootprints(
+            training_mesh,
+            silhouette_camera,
+            silhouette_image_size,
+            silhouette_margin_size,
+            rotation_axis_samples,
+            rotation_angle_samples,
+            translation_samples);
+        } else
+          outInfo("File in cache: " + cache_filename);
+
+        outInfo("Cached: " << cached);
 
         this->edge_models[*fname] = edge_model;
+
+        if (!cached)
+          edge_model.saveToFile(cache_filename);
       } catch (const std::exception &ex) {
         outError(ex.what());
       }
