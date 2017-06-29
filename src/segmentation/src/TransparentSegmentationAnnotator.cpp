@@ -52,15 +52,22 @@ public:
     outInfo("process start");
     rs::SceneCas cas(tcas);
 
-    if (!cas.get(VIEW_MASK, image_depth)) {
-      outError("No view mask image");
+    cv::Mat cas_image_rgb;
+    cv::Mat cas_image_depth;
+
+    if (!cas.get(VIEW_DEPTH_IMAGE, cas_image_depth)) {
+      outError("No depth image");
       return UIMA_ERR_NONE;
     }
 
-    if (!cas.get(VIEW_COLOR_IMAGE, image_rgb)) {
+    if (!cas.get(VIEW_COLOR_IMAGE, cas_image_rgb)) {
       outError("No color image");
       return UIMA_ERR_NONE;
     }
+
+    cas_image_depth.convertTo(image_depth, CV_8UC1, 1, 0);
+    cv::threshold(image_depth, image_depth, 1, 255, cv::THRESH_BINARY_INV);
+    cv::resize(cas_image_rgb, image_rgb, image_depth.size());
 
     rs::Scene scene = cas.getScene();
 
@@ -78,7 +85,7 @@ public:
     else
     {
       sensor_msgs::CameraInfo camInfo;
-      cas.get(VIEW_CAMERA_INFO_HD, camInfo);
+      cas.get(VIEW_CAMERA_INFO, camInfo);
       readCameraInfo(camInfo);
 
       cv::Mat planeNormal(3, 1, CV_64F);
@@ -87,12 +94,12 @@ public:
       planeNormal.at<double>(2) = model[2];
       const double planeDistance = model[3];
 
-      cv::Mat planeMask = getPlaneMaskClosed(plane, camInfo); 
+      cv::Mat plane_mask = getPlaneMaskClosed(plane, camInfo); 
 
-      search_mask = planeMask;
+      search_mask = plane_mask;
 
       // TODO: use raw depth mask - the one before ImagePreprocessor
-      cv::Mat depth_failed_mask = (image_depth == 255) & planeMask;
+      cv::Mat depth_failed_mask = (image_depth == 255) & plane_mask;
 
       preprocessFailedMask(depth_failed_mask);
 
@@ -101,7 +108,7 @@ public:
       cv::Mat refined_mask(depth_failed_mask.size(), CV_8UC1, cv::GC_BGD);
 
       for (auto &region : roi_masks)
-        refineRegion(region, refined_mask, image_rgb);
+        refineRegion(region, refined_mask, image_rgb, plane_mask);
 
       refined_mask = ((refined_mask == cv::GC_FGD)
         | (refined_mask == cv::GC_PR_FGD));
@@ -131,19 +138,19 @@ protected:
   }
 
   cv::Mat getPlaneMaskClosed(rs::Plane &plane, sensor_msgs::CameraInfo &camInfo) {
-      cv::Mat planeMask, mask;
-      cv::Rect planeRoi;
+      cv::Mat plane_mask, mask;
+      cv::Rect plane_roi;
 
       rs::conversion::from(plane.mask(), mask);
-      rs::conversion::from(plane.roi(), planeRoi);
+      rs::conversion::from(plane.roi(), plane_roi);
 
-      planeMask = cv::Mat::zeros(camInfo.height / 2, camInfo.width / 2, CV_8U);
-      mask.copyTo(planeMask(planeRoi));
+      plane_mask = cv::Mat::zeros(image_depth.size(), CV_8UC1);
+      mask.copyTo(plane_mask(plane_roi));//, plane_mask(plane_roi));
 
       std::vector<Contour> contours;
       std::vector<cv::Vec4i> hierarchy;
 
-      cv::findContours(planeMask, contours, hierarchy, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_NONE);
+      cv::findContours(plane_mask, contours, hierarchy, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_NONE);
 
       auto plane_it = std::max_element(contours.begin(), contours.end(),
           [](const Contour &a, const Contour &b) {
@@ -153,9 +160,9 @@ protected:
       cv::convexHull(*plane_it, hull);
 
       std::vector<Contour> contour_list{hull};
-      cv::fillPoly(planeMask, contour_list, cv::Scalar(255, 255, 255));
+      cv::fillPoly(plane_mask, contour_list, cv::Scalar(255, 255, 255));
 
-      return planeMask;
+      return plane_mask;
   }
 
   void preprocessFailedMask(cv::Mat &failed_depth) {
@@ -221,7 +228,7 @@ protected:
     return roi_masks;
   }
 
-  void refineRegion(cv::Mat &gc_region_mask, cv::Mat &refined_mask, cv::Mat &rgb) {
+  void refineRegion(cv::Mat &gc_region_mask, cv::Mat &refined_mask, cv::Mat &rgb, cv::Mat &search_region_mask) {
     cv::Size size;
     cv::Point offset;
 
@@ -233,7 +240,7 @@ protected:
       bgd_model, fgd_model, grabcut_iterations, cv::GC_INIT_WITH_MASK);
 
     cv::Mat refined_depth_roi = refined_mask(roi);
-    cv::Mat copy_mask = (gc_region_mask != cv::GC_BGD) & (gc_region_mask != cv::GC_PR_BGD);
+    cv::Mat copy_mask = (gc_region_mask != cv::GC_BGD) & (gc_region_mask != cv::GC_PR_BGD) & search_region_mask(roi);
 
     gc_region_mask.copyTo(refined_depth_roi, copy_mask);
   }
