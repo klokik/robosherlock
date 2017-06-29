@@ -30,7 +30,8 @@ target_link_libraries(rs_SuperVoxelAnnotator rs_core)
 rs_add_library(rs_pclDescriptorExtractor src/PCLDescriptorExtractor.cpp)
 target_link_libraries(rs_pclDescriptorExtractor rs_core)
 
-rs_add_library(rs_contourFittingClassifier src/ContourFittingClassifier.cpp)
+file(GLOB LIBICP_SRC_FILES "src/libicp/src/*.cpp")
+rs_add_library(rs_contourFittingClassifier src/ContourFittingClassifier.cpp ${LIBICP_SRC_FILES})
 target_link_libraries(rs_contourFittingClassifier rs_core)
 
 if(Caffe_FOUND)
