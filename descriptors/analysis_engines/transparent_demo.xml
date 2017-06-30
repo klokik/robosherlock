@@ -142,6 +142,15 @@
           <parameter>StorageWriter/storagedb</parameter>
         </overrides>
       </configurationParameter>
+      <configurationParameter>
+        <name>referenceShapes</name>
+        <type>String</type>
+        <multiValued>true</multiValued>
+        <mandatory>true</mandatory>
+        <overrides>
+          <parameter>ContourFittingClassifier/referenceShapes</parameter>
+        </overrides>
+      </configurationParameter>
     </configurationParameters>
     <configurationParameterSettings>
       <nameValuePair>
@@ -149,7 +158,8 @@
         <value>
           <array>
             <!--string>config_kinect_robot.ini</string-->
-            <string>config_mongodb_playback.ini</string>
+            <!-- <string>config_mongodb_playback.ini</string> -->
+            <string>config_files_cam.ini</string>
           </array>
         </value>
       </nameValuePair>
@@ -159,12 +169,22 @@
           <string>Scenes_annotated</string>
         </value>
       </nameValuePair>
+      <nameValuePair>
+            <name>referenceShapes</name>
+            <value>
+                <array>
+                    <string>/res/cup.ply</string>
+                    <!-- <string>/res/monkey.ply</string> -->
+                    <string>/res/disc.ply</string>
+                </array>
+            </value>
+        </nameValuePair>
     </configurationParameterSettings>
     <flowConstraints>
       <fixedFlow>
       <node>CollectionReader</node>
       <node>ImagePreprocessor</node>
-      <node>PointCloudFilter</node>
+      <!-- <node>PointCloudFilter</node> -->
       <node>NormalEstimator</node>
       <node>PlaneAnnotator</node>
       <node>TransparentSegmentationAnnotator</node>
