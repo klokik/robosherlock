@@ -16,12 +16,12 @@
 #include "libicp/src/icpPointToPoint.h"
 #endif
 
-#include <rs/types/all_types.h>
 //RS
+#include <rs/types/all_types.h>
 #include <rs/scene_cas.h>
 #include <rs/utils/time.h>
 #include <rs/DrawingAnnotator.h>
-
+#include <rs/segmentation/ImageSegmentation.h>
 
 using namespace uima;
 
@@ -200,12 +200,29 @@ public:
     rs::StopWatch clock;
     rs::SceneCas cas(tcas);
 
+    cv::Mat cas_image_rgb;
+    cv::Mat cas_image_depth;
+
+    if (!cas.get(VIEW_DEPTH_IMAGE, cas_image_depth)) {
+      outError("No depth image");
+      return UIMA_ERR_NONE;
+    }
+
+    if (!cas.get(VIEW_COLOR_IMAGE, cas_image_rgb)) {
+      outError("No color image");
+      return UIMA_ERR_NONE;
+    }
+
+    cv::resize(cas_image_rgb, image_rgb, cas_image_depth.size());
+
     rs::Scene scene = cas.getScene();
     std::vector<rs::TransparentSegment> t_segments;
     scene.identifiables.filter(t_segments);
 
     outInfo("Found " << t_segments.size() << " transparent segments");
 
+    this->segments.clear();
+    this->labels.clear();
     for (auto &t_segment : t_segments) {
       rs::Segment segment = t_segment.segment.get();
 
@@ -227,6 +244,10 @@ public:
       std::tie(model_name, pose_index, fitness) = getBestFitnessResult(silhouette);
 
       outInfo("\tProbably it is " << model_name << "; score: " << fitness);
+      ImageSegmentation::Segment i_segment;
+      rs::conversion::from(segment, i_segment);
+      this->segments.push_back(i_segment);
+      this->labels.push_back(model_name);
     }
 
     outInfo("took: " << clock.getTime() << " ms.");
@@ -236,7 +257,7 @@ public:
 
 protected:
   void drawImageWithLock(cv::Mat &disp) override {
-    auto seg_size = silhouette_image_size+silhouette_margin_size*2+1;
+/*    auto seg_size = silhouette_image_size+silhouette_margin_size*2+1;
     cv::Mat whole_image = cv::Mat::zeros(seg_size*rotation_axis_samples,
       seg_size*rotation_angle_samples, CV_8UC1);
 
@@ -255,7 +276,10 @@ protected:
       }
     }
 
-    cv::cvtColor(whole_image, disp, CV_GRAY2BGR);
+    cv::cvtColor(whole_image, disp, CV_GRAY2BGR);*/
+
+    disp = image_rgb;
+    ImageSegmentation::drawSegments2D(disp, this->segments, this->labels);
   }
 
   ::Mesh readTrainingMesh(std::string _filename) {
@@ -588,6 +612,11 @@ private:
   int icp_iteration_procrustes{100};
 
   std::map<std::string, EdgeModel> edge_models;
+
+  std::vector<ImageSegmentation::Segment> segments;
+  std::vector<std::string> labels;
+
+  cv::Mat image_rgb;
 
   ::Camera silhouette_camera;
 };
