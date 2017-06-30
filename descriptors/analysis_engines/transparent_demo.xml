@@ -157,8 +157,6 @@
         <name>camera_config_files</name>
         <value>
           <array>
-            <!--string>config_kinect_robot.ini</string-->
-            <!-- <string>config_mongodb_playback.ini</string> -->
             <string>config_files_cam.ini</string>
           </array>
         </value>
@@ -173,6 +171,7 @@
             <name>referenceShapes</name>
             <value>
                 <array>
+                    <string>/res/bottle.ply</string>
                     <string>/res/cup.ply</string>
                     <!-- <string>/res/monkey.ply</string> -->
                     <string>/res/disc.ply</string>
