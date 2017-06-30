@@ -19,7 +19,7 @@ class FileCameraBridge : public CamInterface
 {
 public:
   FileCameraBridge(const boost::property_tree::ptree &pt): CamInterface(pt) {
-    _newData = false;
+    _newData = true;
 
     cameraInfo.width = 640;
     cameraInfo.height = 480;
@@ -52,9 +52,11 @@ public:
     // cameraInfo.P[11] = 0;
 
     // loadFrame("color_2.png", "depth_2.png");
-    loadFrame("color_3.png", "depth_3.png");
-    loadFrame("color_4.png", "depth_4.png");
-    loadFrame("color_5.png", "depth.tiff");
+    // loadFrame("color_3.png", "depth_3.png");
+    // loadFrame("color_4.png", "depth_4.png");
+    // loadFrame("color_5.png", "depth.tiff");
+
+    loadFrame(pt.get<std::string>("camera_topics.color"), pt.get<std::string>("camera_topics.depth"));
 
     this->frame_rate = pt.get<double>("camera.frame_rate");
     auto worker = std::bind(&FileCameraBridge::threadWorker, this,
