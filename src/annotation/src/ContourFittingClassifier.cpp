@@ -279,7 +279,7 @@ protected:
     cv::cvtColor(whole_image, disp, CV_GRAY2BGR);*/
 
     disp = image_rgb;
-    ImageSegmentation::drawSegments2D(disp, this->segments, this->labels);
+    ImageSegmentation::drawSegments2D(disp, this->segments, this->labels, 1, 0.5);
   }
 
   ::Mesh readTrainingMesh(std::string _filename) {
