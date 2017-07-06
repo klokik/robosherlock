@@ -43,19 +43,21 @@ using Silhouettef = std::vector<cv::Point2f>;
 
 cv::Point2f transform(cv::Mat &M, const cv::Point2f &pt);
 ::Silhouettef transform(cv::Mat &M, const ::Silhouettef &sil);
-::Silhouette transform(cv::Mat &M, const ::Silhouette &sil);
+::Silhouettef transform(cv::Mat &M, const ::Silhouette &sil);
+cv::Rect_<float> getBoundingRect(::Silhouettef &sil);
 
 struct Footprint {
   cv::Mat img;
-  Silhouette contour;
+  Silhouettef contour;
   Pose pose;
+  cv::Mat camera_matrix;
 };
 
 class EdgeModel {
   public: std::string name;
   public: Mesh mesh;
 
-  public: void addFootprint(cv::Mat &footprint, const Silhouette &contour, const Pose &pose) {
+  public: void addFootprint(cv::Mat &footprint, const Silhouettef &contour, const Pose &pose) {
     if (contour.size() > 0)
       this->items.push_back({footprint.clone(), contour, pose});
   }
@@ -82,7 +84,7 @@ class EdgeModel {
     if (!ifs.good())
       return false;
 
-    Silhouette contour;
+    ::Silhouettef contour;
     Pose pose;
 
     for (std::string line; std::getline(ifs, line);) {
@@ -96,7 +98,7 @@ class EdgeModel {
         iss >> pose.rot(0) >> pose.rot(1) >> pose.rot(2) >> pose.trans(0) >> pose.trans(1);
       }
       else {
-        cv::Point2i pt;
+        cv::Point2f pt;
         iss >> pt.x >> pt.y;
 
         contour.push_back(pt);
@@ -109,7 +111,7 @@ class EdgeModel {
     return true;
   }
 
-  protected: cv::Mat drawFootprint(Silhouette &contour) {
+  protected: cv::Mat drawFootprint(Silhouettef &contour) {
     if (contour.size() == 0)
       return cv::Mat();
 
@@ -233,12 +235,12 @@ public:
     for (auto &t_segment : t_segments) {
       rs::Segment segment = t_segment.segment.get();
 
-      Silhouette silhouette;
+      ::Silhouettef silhouette;
       for (auto &rs_pt : segment.contour.get()) {
         cv::Point2i cv_pt;
         rs::conversion::from(rs_pt, cv_pt);
 
-        silhouette.push_back(cv_pt);
+        silhouette.push_back(cv::Point2f(cv_pt.x, cv_pt.y));
       }
 
       outInfo("\tSilhouette of " << silhouette.size() << " points");
@@ -256,7 +258,7 @@ public:
       this->segments.push_back(i_segment);
       this->labels.push_back(model_name);
 
-      Silhouette &sil = edge_models[model_name].items[pose_index].contour;
+      ::Silhouettef &sil = edge_models[model_name].items[pose_index].contour;
 
       cv::Mat pr_trans = procrustesTransform(sil, silhouette);
 
@@ -395,24 +397,6 @@ protected:
     return e_model;
   }
 
-  static cv::Rect_<float> getBoundingRect(::Silhouettef &sil) {
-    cv::Rect_<float> b_rect;
-
-    auto h_it = std::minmax_element(sil.begin(), sil.end(),
-      [](const cv::Point2f &a, const cv::Point2f &b) {
-        return a.x < b.x;});
-    auto v_it = std::minmax_element(sil.begin(), sil.end(),
-      [](const cv::Point2f &a, const cv::Point2f &b) {
-        return a.y < b.y;});
-
-    b_rect.x = h_it.first->x;
-    b_rect.y = v_it.first->y;
-    b_rect.width = h_it.second->x - b_rect.x;
-    b_rect.height = v_it.second->y - b_rect.y;
-
-    return b_rect;
-  }
-
   static ::Footprint getFootprint(const ::Mesh &mesh,
       const Pose &pose, ::Camera &cam,const int im_size, const int marg_size) {
     // project points on a plane
@@ -462,11 +446,14 @@ protected:
       cv::BORDER_CONSTANT | cv::BORDER_ISOLATED, cv::Scalar(0));
 
     cv::Mat tmp = footprint.clone();
-    std::vector<Silhouette> contours;
+    std::vector<::Silhouette> contours;
     std::vector<cv::Vec4i> hierarchy;
 
     cv::findContours(tmp, contours, hierarchy, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_NONE);
     assert(contours.size() == 1);
+
+    cv::Mat bounding_matrix_inv = (cv::Mat_<float>(3, 3) << 1/rate, 0, b_rect.x, 0, 1/rate, b_rect.y, 0 , 0, 1);
+    Silhouettef contour = transform(bounding_matrix_inv, contours[0]);
 
     cv::Mat mkernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3));
     cv::morphologyEx(footprint, footprint, cv::MORPH_GRADIENT, mkernel,
@@ -475,15 +462,15 @@ protected:
     // cv::imshow("footprint", footprint);
     // cv::waitKey(100);
 
-    return {footprint, contours[0], pose};
+    return {footprint, contour, pose};
   }
 
-  static ::Silhouettef normalizeSilhouette(const ::Silhouette &shape) {
+  static ::Silhouettef normalizeSilhouette(const ::Silhouettef &shape) {
     ::Silhouettef result;
     for (const auto &pt : shape)
       result.push_back(pt);
 
-    cv::Point2f mean = std::accumulate(shape.cbegin(), shape.cend(), cv::Point2i());
+    cv::Point2f mean = std::accumulate(shape.cbegin(), shape.cend(), cv::Point2f());
     mean *= (1.f / shape.size());
 
     float std_dev = 0;
@@ -589,7 +576,7 @@ protected:
   }
 #endif
 
-  static double getFitnessScore(const ::Silhouette &a, const ::Silhouette &b) {
+  static double getFitnessScore(const ::Silhouettef &a, const ::Silhouettef &b) {
     ::Silhouettef na = normalizeSilhouette(a);
     ::Silhouettef nb = normalizeSilhouette(b);
 
@@ -598,7 +585,7 @@ protected:
     return transform__score.second;
   }
 
-  std::tuple<std::string, size_t, double> getBestFitnessResult(const Silhouette &shape) {
+  std::tuple<std::string, size_t, double> getBestFitnessResult(const Silhouettef &shape) {
     std::string best_model_name;
     size_t best_pose_index{0};
     double best_fitness_score{std::numeric_limits<double>::max()};
@@ -619,8 +606,8 @@ protected:
     return std::tuple<std::string, size_t, double>{best_model_name, best_pose_index, best_fitness_score};
   }
 
-  std::pair<cv::Vec2f, float> getMeanAndDev(::Silhouette &sil) {
-    cv::Point2f mean = std::accumulate(sil.cbegin(), sil.cend(), cv::Point2i());
+  static std::pair<cv::Vec2f, float> getMeanAndDev(::Silhouettef &sil) {
+    cv::Point2f mean = std::accumulate(sil.cbegin(), sil.cend(), cv::Point2f());
     mean *= (1.f / sil.size());
 
     float std_dev = 0;
@@ -632,7 +619,7 @@ protected:
     return std::make_pair(mean, std_dev);
   }
 
-  cv::Mat procrustesTransform(::Silhouette &sil, ::Silhouette &tmplt) {
+  static cv::Mat procrustesTransform(::Silhouettef &sil, ::Silhouettef &tmplt) {
     cv::Vec2f mean_s, mean_t;
     float deviation_s, deviation_t;
 
@@ -652,12 +639,6 @@ protected:
     cv::Mat St = (cv::Mat_<float>(3, 3) << deviation_t, 0, 0, 0, deviation_t, 0, 0 , 0, 1);
     cv::Mat Tt = (cv::Mat_<float>(3, 3) << 1, 0, mean_t(0), 0, 1, mean_t(1), 0 , 0, 1);
 
-/*    std::cout << Ts_inv << std::endl;
-    std::cout << Ss_inv << std::endl;
-    std::cout << Rst << std::endl;
-    std::cout << St << std::endl;
-    std::cout << Tt << std::endl;*/
-
     cv::Mat sil_to_tmplt_transformation = Tt * St * Rst * Ss_inv * Ts_inv;
 
     return sil_to_tmplt_transformation;
@@ -675,7 +656,7 @@ private:
   std::map<std::string, EdgeModel> edge_models;
 
   std::vector<ImageSegmentation::Segment> segments;
-  std::vector<Silhouette> fitted_silhouettes;
+  std::vector<Silhouettef> fitted_silhouettes;
   std::vector<std::string> labels;
 
   cv::Mat image_rgb;
@@ -704,17 +685,35 @@ cv::Point2f transform(cv::Mat &M, const cv::Point2f &pt) {
   return result;
 }
 
-::Silhouette transform(cv::Mat &M, const ::Silhouette &sil) {
-  Silhouette result;
+::Silhouettef transform(cv::Mat &M, const ::Silhouette &sil) {
+  Silhouettef result;
 
   for (const auto &pt : sil) {
     cv::Point2f ptf(pt.x, pt.y);
-    cv::Point2f nptf = transform(M, ptf);
 
-    result.push_back(cv::Point2i(nptf.x, nptf.y));
+    result.push_back(transform(M, ptf));
   }
 
   return result;
+}
+
+
+cv::Rect_<float> getBoundingRect(::Silhouettef &sil) {
+  cv::Rect_<float> b_rect;
+
+  auto h_it = std::minmax_element(sil.begin(), sil.end(),
+    [](const cv::Point2f &a, const cv::Point2f &b) {
+      return a.x < b.x;});
+  auto v_it = std::minmax_element(sil.begin(), sil.end(),
+    [](const cv::Point2f &a, const cv::Point2f &b) {
+      return a.y < b.y;});
+
+  b_rect.x = h_it.first->x;
+  b_rect.y = v_it.first->y;
+  b_rect.width = h_it.second->x - b_rect.x;
+  b_rect.height = v_it.second->y - b_rect.y;
+
+  return b_rect;
 }
 
 // This macro exports an entry point that is used to create the annotator.

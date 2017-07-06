@@ -172,8 +172,8 @@
             <value>
                 <array>
                     <string>/res/other/pokal.ply</string>
-                    <string>/res/other/lodrat.ply</string>
-                    <string>/res/other/godis.ply</string>
+                    <!-- <string>/res/other/lodrat.ply</string> -->
+                    <!-- <string>/res/other/godis.ply</string> -->
                     <string>/res/other/oanvand.ply</string>
                 </array>
             </value>
