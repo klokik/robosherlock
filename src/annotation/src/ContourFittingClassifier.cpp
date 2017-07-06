@@ -42,6 +42,8 @@ using Silhouette = std::vector<cv::Point2i>;
 using Silhouettef = std::vector<cv::Point2f>;
 
 cv::Point2f transform(cv::Mat &M, const cv::Point2f &pt);
+cv::Point3f transform(cv::Mat &M, const cv::Point3f &pt);
+cv::Vec3f transform(cv::Mat &M, const cv::Vec3f &vec);
 ::Silhouettef transform(cv::Mat &M, const ::Silhouettef &sil);
 ::Silhouettef transform(cv::Mat &M, const ::Silhouette &sil);
 cv::Rect_<float> getBoundingRect(::Silhouettef &sil);
@@ -392,6 +394,68 @@ protected:
     for (const auto &sil : this->fitted_silhouettes) {
       for (auto &pt : sil)
         cv::circle(disp, pt, 1, cv::Scalar(255, 0, 255), -1);
+    }
+
+    int i = 0;
+    for (const auto &name : this->labels) {
+      outInfo("draw");
+      Camera cam;
+      drawMesh(disp, cam, this->edge_models[name].mesh, this->affine_mesh_transforms[i]);
+      ++i;
+    }
+  }
+
+  static void drawMesh(cv::Mat &dst, Camera &cam, Mesh &mesh, cv::Mat cam_sp_transform) {
+    std::vector<cv::Point3f> vertice;
+    std::vector<cv::Vec3f> normal;
+
+    vertice.reserve(mesh.points.size());
+    normal.reserve(mesh.normals.size());
+
+    assert(vertice.size() == normal.size());
+
+    auto rect33 = cv::Rect(0, 0, 3, 3);
+    cv::Mat cam_sp_rot = cv::Mat::eye(3, 4, CV_32FC1);
+    cam_sp_transform(rect33).copyTo(cam_sp_rot(rect33));
+
+    for (const auto &vtx : mesh.points)
+      vertice.push_back(transform(cam_sp_transform, vtx));
+
+    for (const auto &nrm : mesh.normals)
+      normal.push_back(transform(cam_sp_rot, nrm));
+
+    std::vector<cv::Point2f> vertice_2d;
+
+    // FIXME: shift and scale points to dst size
+    cv::Mat draw_cam_matrix = cv::Mat::eye(3, 3, CV_32FC1);
+    draw_cam_matrix.at<float>(0, 2) = dst.cols/2.f;
+    draw_cam_matrix.at<float>(1, 2) = dst.rows/2.f;
+    draw_cam_matrix.at<float>(0, 0) = dst.cols/2.f;
+    draw_cam_matrix.at<float>(1, 1) = dst.cols/2.f;
+    cv::projectPoints(vertice, cv::Vec3f(), cv::Vec3f(), draw_cam_matrix, {}, vertice_2d);
+
+    cv::Vec3f light = cv::normalize(cv::Vec3f(1, 1, 1));
+
+/*    float alpha = 0.3f;
+    for (const auto &tri : mesh.triangles) {
+      cv::Vec3f avg_normal = (normal[tri[0]] + normal[tri[1]] + normal[tri[2]]) / 3;
+
+      float brightness = avg_normal.dot(light);
+      cv::Scalar color = cv::Scalar(255*brightness, 255*brightness, 255*brightness);
+
+      std::vector<cv::Point2i> poly{
+          vertice_2d[tri[0]],
+          vertice_2d[tri[1]],
+          vertice_2d[tri[2]]};
+
+      cv::Mat mask = cv::Mat::zeros(dst.size(), CV_8UC3);
+      cv::fillConvexPoly(mask, poly, color);
+
+      dst += mask*alpha;
+    }*/
+
+    for (const auto &pt2 : vertice_2d) {
+      cv::circle(dst, pt2, 1, cv::Scalar(0, 255, 0), -1);
     }
   }
 
@@ -767,6 +831,25 @@ cv::Point2f transform(cv::Mat &M, const cv::Point2f &pt) {
   cv::Mat dst = M * vec;
 
   return cv::Point2f(dst.at<float>(0, 0), dst.at<float>(1, 0));
+}
+
+cv::Point3f transform(cv::Mat &M, const cv::Point3f &pt) {
+  cv::Mat vec(4, 1, CV_32FC1);
+
+  vec.at<float>(0, 0) = pt.x;
+  vec.at<float>(1, 0) = pt.y;
+  vec.at<float>(2, 0) = pt.z;
+  vec.at<float>(3, 0) = 1.f;
+
+  cv::Mat dst = M * vec;
+
+  return cv::Point3f(dst.at<float>(0, 0), dst.at<float>(1, 0), dst.at<float>(2, 0));
+}
+
+cv::Vec3f transform(cv::Mat &M, const cv::Vec3f &vec) {
+  cv::Point3f pt(vec[0], vec[1], vec[2]);
+
+  return transform(M, pt);
 }
 
 ::Silhouettef transform(cv::Mat &M, const ::Silhouettef &sil) {
