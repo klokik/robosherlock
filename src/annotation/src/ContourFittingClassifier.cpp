@@ -50,7 +50,7 @@ struct Footprint {
   cv::Mat img;
   Silhouettef contour;
   Pose pose;
-  cv::Mat camera_matrix;
+  // cv::Mat camera_matrix;
 };
 
 class EdgeModel {
@@ -150,7 +150,7 @@ public:
     ctx.extractValue("silhouetteMarginSize", silhouette_margin_size);
     ctx.extractValue("icpIterationsProcrustes", icp_iteration_procrustes);
 
-    bool ignore_cache = false;
+    bool ignore_cache = true;
     // ctx.extractValue("ignoreSilhouetteCache", ignoreSilhouetteCache);
 
     std::vector<std::string*> filenames;
@@ -164,8 +164,9 @@ public:
         std::string cache_filename = this->cache_path + fname->substr(fname->rfind('/')) + ".txt";
         outInfo("Cache name " << cache_filename);
 
+        auto training_mesh = readTrainingMesh(*fname);
+
         if (!(cached = edge_model.loadFromFile(cache_filename)) || ignore_cache) {
-          auto training_mesh = readTrainingMesh(*fname);
           edge_model = getSampledFootprints(
             training_mesh,
             silhouette_camera,
@@ -177,11 +178,13 @@ public:
         } else
           outInfo("File in cache: " + cache_filename);
 
+        edge_model.mesh = training_mesh;
+
         outInfo("Cached: " << cached);
 
         this->edge_models[*fname] = edge_model;
 
-        if (!cached)
+        if (!cached || ignore_cache)
           edge_model.saveToFile(cache_filename);
       } catch (const std::exception &ex) {
         outError(ex.what());
@@ -232,6 +235,7 @@ public:
     this->segments.clear();
     this->fitted_silhouettes.clear();
     this->labels.clear();
+    this->affine_mesh_transforms.clear();
     for (auto &t_segment : t_segments) {
       rs::Segment segment = t_segment.segment.get();
 
@@ -258,12 +262,100 @@ public:
       this->segments.push_back(i_segment);
       this->labels.push_back(model_name);
 
+      outInfo("Trace 1");
+
       ::Silhouettef &sil = edge_models[model_name].items[pose_index].contour;
+      auto &mesh = edge_models[model_name].mesh;
+      assert(mesh.points.size() >= 4);
 
       cv::Mat pr_trans = procrustesTransform(sil, silhouette);
-
       std::cout << pr_trans << std::endl;
       this->fitted_silhouettes.push_back(transform(pr_trans, sil));
+
+      // find transformation, i.e. solve M*r = A_ex*v for r
+      float t_z_est = 10; // lookup distance projection on z to table at given point
+      float ref_z_sil = 5;  // distance of z shift during silhouette generation
+      cv::Mat A = cv::Mat::eye(3, 3, CV_32FC1);
+      cv::Mat M = cv::Mat::zeros(12, 12, CV_32FC1);
+
+      outInfo("Trace 2");
+
+      // find A ...
+      cv::Mat K_sil = this->silhouette_camera.matrix;
+      cv::Mat K_ref = (cv::Mat_<float>(3, 3) << 570.3422241210938, 0.0, 319.5, 0.0, 570.3422241210938, 239.5, 0.0, 0.0, 1.0);
+      cv::Mat S = pr_trans;
+      A = K_ref.inv() * S * K_sil;
+
+      outInfo("Trace 3");
+
+      // find 4 distinct points
+      cv::Mat v = cv::Mat::ones(12, 1, CV_32FC1);
+
+      std::vector<size_t> ids(mesh.points.size());
+      std::mt19937 rng(1337);
+      for (size_t i = 0; i < ids.size(); ++i)
+        ids[i] = i;
+      std::shuffle(ids.begin(), ids.end(), rng);
+
+      outInfo("Trace 4");
+
+      for (int i = 0; i < 4; ++i) {
+        cv::Point3f pt = mesh.points[ids[i]];
+        outInfo("id " << ids[i] << "; " << pt);
+        v.at<float>(i*3 + 0, 0) = pt.x;
+        v.at<float>(i*3 + 1, 0) = pt.y;
+        v.at<float>(i*3 + 2, 0) = pt.z;
+      }
+
+      outInfo("Trace 5");
+
+      cv::Mat A_ex = cv::Mat::zeros(12, 12, CV_32FC1);
+      cv::Mat A1 = A * (t_z_est + v.at<float>(  2, 0))/(ref_z_sil);
+      cv::Mat A2 = A * (t_z_est + v.at<float>(3+2, 0))/(ref_z_sil);
+      cv::Mat A3 = A * (t_z_est + v.at<float>(6+2, 0))/(ref_z_sil);
+      cv::Mat A4 = A * (t_z_est + v.at<float>(9+2, 0))/(ref_z_sil);
+
+      A1.copyTo(A_ex(cv::Rect(0, 0, 3, 3)));
+      A2.copyTo(A_ex(cv::Rect(3, 3, 3, 3)));
+      A3.copyTo(A_ex(cv::Rect(6, 6, 3, 3)));
+      A4.copyTo(A_ex(cv::Rect(9, 9, 3, 3)));
+
+      outInfo("Trace 6");
+
+      cv::Mat rhs = A_ex*v;
+
+      // fill M ...
+      for (int i = 0; i < 12; ++i)
+        M.at<float>(i, 9 + (i % 3)) = 1;
+
+      outInfo("Trace 7");
+
+      for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 3; ++j) {
+          M.at<float>(i*3+j, j*3 + 0) = v.at<float>(i*3 + 0, 0);
+          M.at<float>(i*3+j, j*3 + 1) = v.at<float>(i*3 + 1, 0);
+          M.at<float>(i*3+j, j*3 + 2) = v.at<float>(i*3 + 2, 0);
+        }
+      }
+      // std::cout << M << std::endl;
+
+      outInfo("Trace 8");
+
+      cv::Mat r;
+      cv::solve(M, rhs, r, cv::DECOMP_SVD);
+
+      outInfo("Trace 9");
+
+      cv::Mat affine_3d_transform(3, 4, CV_32FC1);
+      for (int i = 0; i < 9; ++i)
+        affine_3d_transform.at<float>(i/3, i%3) = r.at<float>(i, 0);
+
+      affine_3d_transform.at<float>(0, 3) = r.at<float>(9, 0);
+      affine_3d_transform.at<float>(1, 3) = r.at<float>(10, 0);
+      affine_3d_transform.at<float>(2, 3) = r.at<float>(11, 0);
+
+      std::cout << affine_3d_transform << std::endl;
+      this->affine_mesh_transforms.push_back(affine_3d_transform);
     }
 
     outInfo("took: " << clock.getTime() << " ms.");
@@ -387,10 +479,10 @@ protected:
         outInfo("Training sample (" << r_ax_i << ";" << r_ang_i << ")");
 
         // avoid translation sampling for now
-        Pose mesh_pose{rodrigues, {0,0,-mlen*3.f}};
+        Pose mesh_pose{rodrigues, {0,0,/*-mlen*3.f*/-5.f}};
 
         auto footprint = getFootprint(mesh, mesh_pose, cam, im_size, marg_size);
-        e_model.addFootprint(footprint.img, footprint.contour, footprint.pose);
+        e_model.items.push_back(footprint);
       }
     }
 
@@ -657,6 +749,7 @@ private:
 
   std::vector<ImageSegmentation::Segment> segments;
   std::vector<Silhouettef> fitted_silhouettes;
+  std::vector<cv::Mat> affine_mesh_transforms;
   std::vector<std::string> labels;
 
   cv::Mat image_rgb;
