@@ -42,6 +42,8 @@ using Silhouette = std::vector<cv::Point2i>;
 using Silhouettef = std::vector<cv::Point2f>;
 
 cv::Point2f transform(cv::Mat &M, const cv::Point2f &pt);
+::Silhouettef transform(cv::Mat &M, const ::Silhouettef &sil);
+::Silhouette transform(cv::Mat &M, const ::Silhouette &sil);
 
 struct Footprint {
   cv::Mat img;
@@ -146,6 +148,9 @@ public:
     ctx.extractValue("silhouetteMarginSize", silhouette_margin_size);
     ctx.extractValue("icpIterationsProcrustes", icp_iteration_procrustes);
 
+    bool ignore_cache = false;
+    // ctx.extractValue("ignoreSilhouetteCache", ignoreSilhouetteCache);
+
     std::vector<std::string*> filenames;
     ctx.extractValue("referenceShapes", filenames);
 
@@ -157,7 +162,7 @@ public:
         std::string cache_filename = this->cache_path + fname->substr(fname->rfind('/')) + ".txt";
         outInfo("Cache name " << cache_filename);
 
-        if (!(cached = edge_model.loadFromFile(cache_filename))) {
+        if (!(cached = edge_model.loadFromFile(cache_filename)) || ignore_cache) {
           auto training_mesh = readTrainingMesh(*fname);
           edge_model = getSampledFootprints(
             training_mesh,
@@ -223,6 +228,7 @@ public:
     outInfo("Found " << t_segments.size() << " transparent segments");
 
     this->segments.clear();
+    this->fitted_silhouettes.clear();
     this->labels.clear();
     for (auto &t_segment : t_segments) {
       rs::Segment segment = t_segment.segment.get();
@@ -249,6 +255,13 @@ public:
       rs::conversion::from(segment, i_segment);
       this->segments.push_back(i_segment);
       this->labels.push_back(model_name);
+
+      Silhouette &sil = edge_models[model_name].items[pose_index].contour;
+
+      cv::Mat pr_trans = procrustesTransform(sil, silhouette);
+
+      std::cout << pr_trans << std::endl;
+      this->fitted_silhouettes.push_back(transform(pr_trans, sil));
     }
 
     outInfo("took: " << clock.getTime() << " ms.");
@@ -281,6 +294,11 @@ protected:
 
     disp = image_rgb;
     ImageSegmentation::drawSegments2D(disp, this->segments, this->labels, 1, 0.5);
+
+    for (const auto &sil : this->fitted_silhouettes) {
+      for (auto &pt : sil)
+        cv::circle(disp, pt, 1, cv::Scalar(255, 0, 255), -1);
+    }
   }
 
   ::Mesh readTrainingMesh(std::string _filename) {
@@ -533,7 +551,7 @@ protected:
 
 #else
 
-  static std::pair<::Silhouettef, double> fitICP(::Silhouettef &test, ::Silhouettef &model) {
+  static std::pair<cv::Mat, double> fitICP(::Silhouettef &test, ::Silhouettef &model) {
 
     std::vector<double> test_arr;
     std::vector<double> model_arr;
@@ -556,23 +574,18 @@ protected:
     IcpPointToPoint icp(&test_arr[0], test.size(), dim);
     double score = icp.fit(&model_arr[0], model.size(), rot, trans, -1);
 
-    cv::Mat cv_trf(3, 3, CV_64FC1, cv::Scalar(0.f));
-    cv_trf.at<double>(0, 0) = rot.val[0][0];
-    cv_trf.at<double>(0, 1) = rot.val[1][0];
-    cv_trf.at<double>(1, 0) = rot.val[0][1];
-    cv_trf.at<double>(1, 1) = rot.val[1][1];
+    cv::Mat cv_trf(3, 3, CV_32FC1, cv::Scalar(0.f));
+    cv_trf.at<float>(0, 0) = rot.val[0][0];
+    cv_trf.at<float>(0, 1) = rot.val[1][0];
+    cv_trf.at<float>(1, 0) = rot.val[0][1];
+    cv_trf.at<float>(1, 1) = rot.val[1][1];
 
-    cv_trf.at<double>(0, 2) = 0; //trans.val[0][0];
-    cv_trf.at<double>(1, 2) = 0; //trans.val[1][0];
-    cv_trf.at<double>(2, 2) = 1.f;
+    // assume that translation is small enough
+    cv_trf.at<float>(0, 2) = 0; //trans.val[0][0];
+    cv_trf.at<float>(1, 2) = 0; //trans.val[1][0];
+    cv_trf.at<float>(2, 2) = 1.f;
 
-    ::Silhouettef result;
-    for (const auto &pt : test) {
-      cv::Point2f ptf = pt;
-      result.push_back(transform(cv_trf, ptf));
-    }
-
-    return {result, score};
+    return {cv_trf, score};
   }
 #endif
 
@@ -580,9 +593,9 @@ protected:
     ::Silhouettef na = normalizeSilhouette(a);
     ::Silhouettef nb = normalizeSilhouette(b);
 
-    auto fitted__score = fitICP(na, nb);
+    auto transform__score = fitICP(na, nb);
 
-    return fitted__score.second;
+    return transform__score.second;
   }
 
   std::tuple<std::string, size_t, double> getBestFitnessResult(const Silhouette &shape) {
@@ -606,6 +619,50 @@ protected:
     return std::tuple<std::string, size_t, double>{best_model_name, best_pose_index, best_fitness_score};
   }
 
+  std::pair<cv::Vec2f, float> getMeanAndDev(::Silhouette &sil) {
+    cv::Point2f mean = std::accumulate(sil.cbegin(), sil.cend(), cv::Point2i());
+    mean *= (1.f / sil.size());
+
+    float std_dev = 0;
+    for (auto &pt : sil)
+      std_dev += std::pow(cv::norm(cv::Point2f(pt.x, pt.y) - mean), 2);
+
+    std_dev = std::sqrt(std_dev / sil.size());
+
+    return std::make_pair(mean, std_dev);
+  }
+
+  cv::Mat procrustesTransform(::Silhouette &sil, ::Silhouette &tmplt) {
+    cv::Vec2f mean_s, mean_t;
+    float deviation_s, deviation_t;
+
+    // FIXME: avoid double mean/deviation computation
+    std::tie(mean_s, deviation_s) = getMeanAndDev(sil);
+    std::tie(mean_t, deviation_t) = getMeanAndDev(tmplt);
+
+    auto ns = normalizeSilhouette(sil);
+    auto nt = normalizeSilhouette(tmplt);
+
+    cv::Mat icp_mat;
+    std::tie(icp_mat, std::ignore) = fitICP(ns, nt);
+
+    cv::Mat Ts_inv = (cv::Mat_<float>(3, 3) << 1, 0, -mean_s(0), 0, 1, -mean_s(1), 0 , 0, 1);
+    cv::Mat Ss_inv = (cv::Mat_<float>(3, 3) << 1/deviation_s, 0, 0, 0, 1/deviation_s, 0, 0 , 0, 1);
+    cv::Mat Rst = icp_mat;
+    cv::Mat St = (cv::Mat_<float>(3, 3) << deviation_t, 0, 0, 0, deviation_t, 0, 0 , 0, 1);
+    cv::Mat Tt = (cv::Mat_<float>(3, 3) << 1, 0, mean_t(0), 0, 1, mean_t(1), 0 , 0, 1);
+
+/*    std::cout << Ts_inv << std::endl;
+    std::cout << Ss_inv << std::endl;
+    std::cout << Rst << std::endl;
+    std::cout << St << std::endl;
+    std::cout << Tt << std::endl;*/
+
+    cv::Mat sil_to_tmplt_transformation = Tt * St * Rst * Ss_inv * Ts_inv;
+
+    return sil_to_tmplt_transformation;
+  }
+
 private:
   std::string cache_path{"/tmp"};
   int rotation_axis_samples{10};
@@ -618,6 +675,7 @@ private:
   std::map<std::string, EdgeModel> edge_models;
 
   std::vector<ImageSegmentation::Segment> segments;
+  std::vector<Silhouette> fitted_silhouettes;
   std::vector<std::string> labels;
 
   cv::Mat image_rgb;
@@ -625,16 +683,38 @@ private:
   ::Camera silhouette_camera;
 };
 
-cv::Point2f operator*(cv::Mat &M, const cv::Point2f &pt) {
-  cv::Mat_<double> vec(3, 1);
+cv::Point2f transform(cv::Mat &M, const cv::Point2f &pt) {
+  cv::Mat vec(3, 1, CV_32FC1);
 
-  vec(0, 0) = pt.x;
-  vec(1, 0) = pt.y;
-  vec(2, 0) = 1.f;
+  vec.at<float>(0, 0) = pt.x;
+  vec.at<float>(1, 0) = pt.y;
+  vec.at<float>(2, 0) = 1.f;
 
-  cv::Mat_<double> dst = M*vec;
+  cv::Mat dst = M * vec;
 
-  return cv::Point2f(dst(0, 0), dst(1, 0));
+  return cv::Point2f(dst.at<float>(0, 0), dst.at<float>(1, 0));
+}
+
+::Silhouettef transform(cv::Mat &M, const ::Silhouettef &sil) {
+  Silhouettef result;
+
+  for (const auto &pt : sil)
+    result.push_back(transform(M, pt));
+
+  return result;
+}
+
+::Silhouette transform(cv::Mat &M, const ::Silhouette &sil) {
+  Silhouette result;
+
+  for (const auto &pt : sil) {
+    cv::Point2f ptf(pt.x, pt.y);
+    cv::Point2f nptf = transform(M, ptf);
+
+    result.push_back(cv::Point2i(nptf.x, nptf.y));
+  }
+
+  return result;
 }
 
 // This macro exports an entry point that is used to create the annotator.
