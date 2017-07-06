@@ -29,6 +29,7 @@ using Triangle = std::vector<int>;
 
 struct Mesh {
   std::vector<cv::Point3f> points;
+  std::vector<cv::Vec3f> normals;
   std::vector<Triangle> triangles;
 };
 
@@ -40,7 +41,7 @@ struct Pose {
 using Silhouette = std::vector<cv::Point2i>;
 using Silhouettef = std::vector<cv::Point2f>;
 
-cv::Point2f operator*(cv::Mat &M, const cv::Point2f &pt);
+cv::Point2f transform(cv::Mat &M, const cv::Point2f &pt);
 
 struct Footprint {
   cv::Mat img;
@@ -283,8 +284,9 @@ protected:
   }
 
   ::Mesh readTrainingMesh(std::string _filename) {
-    std::vector<cv::Point3f> points; 
-    std::vector<Triangle> triangles; 
+    std::vector<cv::Point3f> points;
+    std::vector<cv::Vec3f> normals;
+    std::vector<Triangle> triangles;
 
     std::string filename = ros::package::getPath("robosherlock") + _filename;
     std::ifstream ifs(filename);
@@ -304,7 +306,7 @@ protected:
           counts[PLYSection::VERTEX] = std::atoi(line.substr(line.rfind(" ")).c_str());
         if (line.find("end_header") == 0) {
           cur_section = PLYSection::VERTEX;
-          outInfo("Vertices: " << counts[PLYSection::VERTEX]);
+          outInfo("Vertices/normals: " << counts[PLYSection::VERTEX]);
           outInfo("Faces: " << counts[PLYSection::FACE]);
         }
       }
@@ -313,9 +315,11 @@ protected:
           std::istringstream iss(line);
 
           cv::Point3f pt;
-          iss >> pt.x >> pt.y >> pt.z;
+          cv::Point3f nrm;
+          iss >> pt.x >> pt.y >> pt.z >> nrm.x >> nrm.y >> nrm.z;
 
           points.push_back(pt);
+          normals.push_back(nrm);
           --counts[cur_section];
         }
         else
@@ -338,7 +342,7 @@ protected:
     assert(counts[PLYSection::VERTEX] == 0);
     assert(counts[PLYSection::FACE] == 0);
 
-    return {points, triangles};
+    return {points, normals, triangles};
   }
 
   static ::EdgeModel getSampledFootprints(const Mesh &mesh, Camera &cam, int im_size,
@@ -565,7 +569,7 @@ protected:
     ::Silhouettef result;
     for (const auto &pt : test) {
       cv::Point2f ptf = pt;
-      result.push_back(cv_trf * std::ref(ptf));
+      result.push_back(transform(cv_trf, ptf));
     }
 
     return {result, score};
