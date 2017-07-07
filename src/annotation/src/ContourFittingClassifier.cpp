@@ -46,6 +46,7 @@ cv::Point3f transform(cv::Mat &M, const cv::Point3f &pt);
 cv::Vec3f transform(cv::Mat &M, const cv::Vec3f &vec);
 ::Silhouettef transform(cv::Mat &M, const ::Silhouettef &sil);
 ::Silhouettef transform(cv::Mat &M, const ::Silhouette &sil);
+std::vector<cv::Point3f> transform(cv::Mat &M, const std::vector<cv::Point3f> &points);
 cv::Rect_<float> getBoundingRect(::Silhouettef &sil);
 
 struct Footprint {
@@ -268,96 +269,43 @@ public:
 
       ::Silhouettef &sil = edge_models[model_name].items[pose_index].contour;
       auto &mesh = edge_models[model_name].mesh;
+      ::Pose &pose = edge_models[model_name].items[pose_index].pose;
       assert(mesh.points.size() >= 4);
 
       cv::Mat pr_trans = procrustesTransform(sil, silhouette);
       std::cout << pr_trans << std::endl;
       this->fitted_silhouettes.push_back(transform(pr_trans, sil));
 
-      // find transformation, i.e. solve M*r = A_ex*v for r
-      float t_z_est = 10; // lookup distance projection on z to table at given point
-      float ref_z_sil = 5;  // distance of z shift during silhouette generation
-      cv::Mat A = cv::Mat::eye(3, 3, CV_32FC1);
-      cv::Mat M = cv::Mat::zeros(12, 12, CV_32FC1);
-
       outInfo("Trace 2");
 
-      // find A ...
-      cv::Mat K_sil = this->silhouette_camera.matrix;
-      cv::Mat K_ref = (cv::Mat_<float>(3, 3) << 570.3422241210938, 0.0, 319.5, 0.0, 570.3422241210938, 239.5, 0.0, 0.0, 1.0);
-      cv::Mat S = pr_trans;
-      A = K_ref.inv() * S * K_sil;
+      std::vector<cv::Point2f> points_2d;
+      cv::projectPoints(mesh.points, pose.rot, pose.trans, silhouette_camera.matrix, silhouette_camera.ks, points_2d);
 
-      outInfo("Trace 3");
-
-      // find 4 distinct points
-      cv::Mat v = cv::Mat::ones(12, 1, CV_32FC1);
-
-      std::vector<size_t> ids(mesh.points.size());
-      std::mt19937 rng(1337);
-      for (size_t i = 0; i < ids.size(); ++i)
-        ids[i] = i;
-      std::shuffle(ids.begin(), ids.end(), rng);
+      // Camera
+      cv::Mat K_ref = (cv::Mat_<double>(3, 3) << 570.3422241210938, 0.0, 319.5, 0.0, 570.3422241210938, 239.5, 0.0, 0.0, 1.0);
+      cv::Mat dis = (cv::Mat_<double>(4, 1) << 0, 0, 0, 0);
 
       outInfo("Trace 4");
 
-      for (int i = 0; i < 4; ++i) {
-        cv::Point3f pt = mesh.points[ids[i]];
-        outInfo("id " << ids[i] << "; " << pt);
-        v.at<float>(i*3 + 0, 0) = pt.x;
-        v.at<float>(i*3 + 1, 0) = pt.y;
-        v.at<float>(i*3 + 2, 0) = pt.z;
-      }
+      cv::Mat r_vec(3, 1, cv::DataType<double>::type);
+      cv::Mat t_vec(3, 1, cv::DataType<double>::type);
+      cv::solvePnPRansac(mesh.points, points_2d, K_ref, dis, r_vec, t_vec);
+
+      r_vec.convertTo(r_vec, CV_32FC1);
+      t_vec.convertTo(r_vec, CV_32FC1);
 
       outInfo("Trace 5");
 
-      cv::Mat A_ex = cv::Mat::zeros(12, 12, CV_32FC1);
-      cv::Mat A1 = A * (t_z_est + v.at<float>(  2, 0))/(ref_z_sil);
-      cv::Mat A2 = A * (t_z_est + v.at<float>(3+2, 0))/(ref_z_sil);
-      cv::Mat A3 = A * (t_z_est + v.at<float>(6+2, 0))/(ref_z_sil);
-      cv::Mat A4 = A * (t_z_est + v.at<float>(9+2, 0))/(ref_z_sil);
-
-      A1.copyTo(A_ex(cv::Rect(0, 0, 3, 3)));
-      A2.copyTo(A_ex(cv::Rect(3, 3, 3, 3)));
-      A3.copyTo(A_ex(cv::Rect(6, 6, 3, 3)));
-      A4.copyTo(A_ex(cv::Rect(9, 9, 3, 3)));
-
-      outInfo("Trace 6");
-
-      cv::Mat rhs = A_ex*v;
-
-      // fill M ...
-      for (int i = 0; i < 12; ++i)
-        M.at<float>(i, 9 + (i % 3)) = 1;
-
-      outInfo("Trace 7");
-
-      for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 3; ++j) {
-          M.at<float>(i*3+j, j*3 + 0) = v.at<float>(i*3 + 0, 0);
-          M.at<float>(i*3+j, j*3 + 1) = v.at<float>(i*3 + 1, 0);
-          M.at<float>(i*3+j, j*3 + 2) = v.at<float>(i*3 + 2, 0);
-        }
-      }
-      // std::cout << M << std::endl;
-
-      outInfo("Trace 8");
-
-      cv::Mat r;
-      cv::solve(M, rhs, r, cv::DECOMP_SVD);
-
-      outInfo("Trace 9");
-
       cv::Mat affine_3d_transform(3, 4, CV_32FC1);
-      for (int i = 0; i < 9; ++i)
-        affine_3d_transform.at<float>(i/3, i%3) = r.at<float>(i, 0);
-
-      affine_3d_transform.at<float>(0, 3) = r.at<float>(9, 0);
-      affine_3d_transform.at<float>(1, 3) = r.at<float>(10, 0);
-      affine_3d_transform.at<float>(2, 3) = r.at<float>(11, 0);
+      cv::Rodrigues(r_vec, affine_3d_transform.colRange(0, 3));
+      affine_3d_transform.at<float>(0, 3) = t_vec.at<float>(0);
+      affine_3d_transform.at<float>(1, 3) = t_vec.at<float>(1);
+      affine_3d_transform.at<float>(2, 3) = t_vec.at<float>(2);
 
       std::cout << affine_3d_transform << std::endl;
       this->affine_mesh_transforms.push_back(affine_3d_transform);
+
+      break;
     }
 
     outInfo("took: " << clock.getTime() << " ms.");
@@ -873,6 +821,15 @@ cv::Vec3f transform(cv::Mat &M, const cv::Vec3f &vec) {
   return result;
 }
 
+std::vector<cv::Point3f> transform(cv::Mat &M, const std::vector<cv::Point3f> &points) {
+  std::vector<cv::Point3f> result;
+  result.reserve(points.size());
+
+  for (const auto &pt : points)
+    result.push_back(transform(M, pt));
+
+  return result;
+}
 
 cv::Rect_<float> getBoundingRect(::Silhouettef &sil) {
   cv::Rect_<float> b_rect;
