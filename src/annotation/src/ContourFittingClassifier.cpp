@@ -239,6 +239,7 @@ public:
     this->fitted_silhouettes.clear();
     this->labels.clear();
     this->affine_mesh_transforms.clear();
+    this->pose_mesh_transforms.clear();
     for (auto &t_segment : t_segments) {
       rs::Segment segment = t_segment.segment.get();
 
@@ -279,20 +280,25 @@ public:
       outInfo("Trace 2");
 
       std::vector<cv::Point2f> points_2d;
+      outInfo("t_vec: " << pose.trans << "\t r_vec: " << pose.rot);
       cv::projectPoints(mesh.points, pose.rot, pose.trans, silhouette_camera.matrix, silhouette_camera.ks, points_2d);
+      points_2d = transform(pr_trans, points_2d);
 
       // Camera
       cv::Mat K_ref = (cv::Mat_<double>(3, 3) << 570.3422241210938, 0.0, 319.5, 0.0, 570.3422241210938, 239.5, 0.0, 0.0, 1.0);
+      // cv::Mat K_ref = (cv::Mat_<double>(3, 3) << 320, 0.0, 320, 0.0, 320, 240, 0.0, 0.0, 1.0);
       cv::Mat dis = (cv::Mat_<double>(4, 1) << 0, 0, 0, 0);
 
       outInfo("Trace 4");
 
       cv::Mat r_vec(3, 1, cv::DataType<double>::type);
       cv::Mat t_vec(3, 1, cv::DataType<double>::type);
-      cv::solvePnPRansac(mesh.points, points_2d, K_ref, dis, r_vec, t_vec);
+      cv::solvePnP(mesh.points, points_2d, K_ref, dis, r_vec, t_vec);
+
 
       r_vec.convertTo(r_vec, CV_32FC1);
-      t_vec.convertTo(r_vec, CV_32FC1);
+      t_vec.convertTo(t_vec, CV_32FC1);
+      outInfo("t_vec: " << t_vec << "\t r_vec: " << r_vec);
 
       outInfo("Trace 5");
 
@@ -305,7 +311,14 @@ public:
       std::cout << affine_3d_transform << std::endl;
       this->affine_mesh_transforms.push_back(affine_3d_transform);
 
-      break;
+      Pose pose_3d;
+      for (int i = 0; i < 3; ++i) {
+        pose_3d.rot(i) = r_vec.at<float>(i);
+        pose_3d.trans(i) = t_vec.at<float>(i);
+      }
+      this->pose_mesh_transforms.push_back(pose_3d);
+
+      // break;
     }
 
     outInfo("took: " << clock.getTime() << " ms.");
@@ -348,12 +361,12 @@ protected:
     for (const auto &name : this->labels) {
       outInfo("draw");
       Camera cam;
-      drawMesh(disp, cam, this->edge_models[name].mesh, this->affine_mesh_transforms[i]);
+      drawMesh(disp, cam, this->edge_models[name].mesh, this->affine_mesh_transforms[i], this->pose_mesh_transforms[i]);
       ++i;
     }
   }
 
-  static void drawMesh(cv::Mat &dst, Camera &cam, Mesh &mesh, cv::Mat cam_sp_transform) {
+  static void drawMesh(cv::Mat &dst, Camera &cam, Mesh &mesh, cv::Mat cam_sp_transform, Pose &pose) {
     std::vector<cv::Point3f> vertice;
     std::vector<cv::Vec3f> normal;
 
@@ -367,7 +380,7 @@ protected:
     cam_sp_transform(rect33).copyTo(cam_sp_rot(rect33));
 
     for (const auto &vtx : mesh.points)
-      vertice.push_back(transform(cam_sp_transform, vtx));
+      vertice.push_back(vtx);//transform(cam_sp_transform, vtx));
 
     for (const auto &nrm : mesh.normals)
       normal.push_back(transform(cam_sp_rot, nrm));
@@ -375,16 +388,18 @@ protected:
     std::vector<cv::Point2f> vertice_2d;
 
     // FIXME: shift and scale points to dst size
-    cv::Mat draw_cam_matrix = cv::Mat::eye(3, 3, CV_32FC1);
-    draw_cam_matrix.at<float>(0, 2) = dst.cols/2.f;
-    draw_cam_matrix.at<float>(1, 2) = dst.rows/2.f;
-    draw_cam_matrix.at<float>(0, 0) = dst.cols/2.f;
-    draw_cam_matrix.at<float>(1, 1) = dst.cols/2.f;
-    cv::projectPoints(vertice, cv::Vec3f(), cv::Vec3f(), draw_cam_matrix, {}, vertice_2d);
+    // cv::Mat draw_cam_matrix = (cv::Mat_<double>(3, 3) << 320, 0.0, 320, 0.0, 320, 240, 0.0, 0.0, 1.0);
+    cv::Mat draw_cam_matrix = (cv::Mat_<double>(3, 3) << 570.3422241210938, 0.0, 319.5, 0.0, 570.3422241210938, 239.5, 0.0, 0.0, 1.0);
+    // cv::Mat draw_cam_matrix = cv::Mat::eye(3, 3, CV_32FC1);
+    // draw_cam_matrix.at<float>(0, 2) = dst.cols/2.f;
+    // draw_cam_matrix.at<float>(1, 2) = dst.rows/2.f;
+    // draw_cam_matrix.at<float>(0, 0) = dst.cols/2.f;
+    // draw_cam_matrix.at<float>(1, 1) = dst.cols/2.f;
+    cv::projectPoints(vertice, pose.rot, pose.trans, draw_cam_matrix, {}, vertice_2d);
 
     cv::Vec3f light = cv::normalize(cv::Vec3f(1, 1, 1));
 
-/*    float alpha = 0.3f;
+    float alpha = 0.3f;
     for (const auto &tri : mesh.triangles) {
       cv::Vec3f avg_normal = (normal[tri[0]] + normal[tri[1]] + normal[tri[2]]) / 3;
 
@@ -400,11 +415,11 @@ protected:
       cv::fillConvexPoly(mask, poly, color);
 
       dst += mask*alpha;
-    }*/
-
-    for (const auto &pt2 : vertice_2d) {
-      cv::circle(dst, pt2, 1, cv::Scalar(0, 255, 0), -1);
     }
+
+    // for (const auto &pt2 : vertice_2d) {
+    //   cv::circle(dst, pt2, 1, cv::Scalar(0, 255, 0), -1);
+    // }
   }
 
   ::Mesh readTrainingMesh(std::string _filename) {
@@ -491,7 +506,7 @@ protected:
         outInfo("Training sample (" << r_ax_i << ";" << r_ang_i << ")");
 
         // avoid translation sampling for now
-        Pose mesh_pose{rodrigues, {0,0,/*-mlen*3.f*/-5.f}};
+        Pose mesh_pose{rodrigues, {0, 0, -mlen*3.f}};
 
         auto footprint = getFootprint(mesh, mesh_pose, cam, im_size, marg_size);
         e_model.items.push_back(footprint);
@@ -556,15 +571,13 @@ protected:
     cv::findContours(tmp, contours, hierarchy, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_NONE);
     assert(contours.size() == 1);
 
-    cv::Mat bounding_matrix_inv = (cv::Mat_<float>(3, 3) << 1/rate, 0, b_rect.x, 0, 1/rate, b_rect.y, 0 , 0, 1);
+    cv::Mat bounding_matrix_inv = (cv::Mat_<float>(3, 3) << 1/rate, 0, b_rect.x - marg_size/rate,
+                                                            0, 1/rate, b_rect.y - marg_size/rate, 0 , 0, 1);
     Silhouettef contour = transform(bounding_matrix_inv, contours[0]);
 
     cv::Mat mkernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3));
     cv::morphologyEx(footprint, footprint, cv::MORPH_GRADIENT, mkernel,
       cv::Point(-1,-1), 1);
-
-    // cv::imshow("footprint", footprint);
-    // cv::waitKey(100);
 
     return {footprint, contour, pose};
   }
@@ -762,6 +775,7 @@ private:
   std::vector<ImageSegmentation::Segment> segments;
   std::vector<Silhouettef> fitted_silhouettes;
   std::vector<cv::Mat> affine_mesh_transforms;
+  std::vector<::Pose> pose_mesh_transforms;
   std::vector<std::string> labels;
 
   cv::Mat image_rgb;
