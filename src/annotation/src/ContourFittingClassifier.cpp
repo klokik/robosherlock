@@ -689,15 +689,18 @@ protected:
     double best_fitness_score{std::numeric_limits<double>::max()};
 
     for (const auto &kv : this->edge_models) {
-      for (auto it = kv.second.items.cbegin(); it != kv.second.items.cend(); it = std::next(it)) {
-        // outInfo("pose " << std::distance(kv.second.items.cbegin(), it));
-        auto score = getFitnessScoreN(nshape, it->normalized_contour);
+      std::vector<double> scores(kv.second.items.size());
 
-        if (score < best_fitness_score) {
-          best_fitness_score = score;
-          best_model_name = kv.first;
-          best_pose_index = std::distance(kv.second.items.cbegin(), it);
-        }
+      #pragma omp parallel for
+      for (int i = 0; i < kv.second.items.size(); ++i) {
+        scores[i] = getFitnessScoreN(nshape, kv.second.items[i].normalized_contour);
+      }
+
+      auto it = std::min_element(scores.cbegin(), scores.cend());
+      if (*it < best_fitness_score) {
+        best_fitness_score = *it;
+        best_model_name = kv.first;
+        best_pose_index = std::distance(scores.cbegin(), it);
       }
     }
 
