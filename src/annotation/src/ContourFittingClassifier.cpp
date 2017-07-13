@@ -1,4 +1,5 @@
 #include <numeric>
+#include <set>
 
 #include <uima/api.hpp>
 
@@ -131,6 +132,61 @@ class EdgeModel {
   public: std::vector<Footprint> items;
 };
 
+struct PoseHypothesis {
+  std::string model_name;
+  Pose pose;
+  double probability;
+};
+
+class PoseRanking {
+  public: void addElement(::PoseHypothesis &hypothesis) {
+    this->hypotheses.insert(hypothesis);
+  }
+
+  public: ::PoseHypothesis getTop() const {
+    return *this->hypotheses.rbegin();
+  }
+
+  public: std::vector<::PoseHypothesis> getTop(const size_t n) const {
+    auto num = std::min(n, hypotheses.size());
+
+    std::vector<::PoseHypothesis> result(this->hypotheses.rbegin(), std::next(this->hypotheses.rbegin(), num));
+
+    return result;
+  }
+
+/*  public: void normalize() {
+    double prob_sum = std::accumulate(this->hypotheses.begin(), this->hypotheses.end(), 0,
+      [](const double sum, const ::PoseHypothesis &a) {
+        return sum + a.probability; });
+
+    for (auto &hyp : this->hypotheses)
+      hyp.probability /= prob_sum;
+  }*/
+
+  public: void filter(const double level) noexcept {
+    while (true) {
+      auto it = std::find_if(this->hypotheses.begin(), this->hypotheses.end(),
+        [level](const ::PoseHypothesis &a) {
+          return a.probability < level; });
+
+      if (it == this->hypotheses.end())
+        break;
+
+      this->hypotheses.erase(it);
+    }
+  }
+
+  private: class LessProbable {
+    public: bool operator()(const ::PoseHypothesis &a, const ::PoseHypothesis &b) {
+      return a.probability < b.probability;
+    }
+  };
+
+  private: std::set<::PoseHypothesis, LessProbable> hypotheses;
+};
+
+
 struct Camera {
   cv::Mat matrix = cv::Mat::eye(3, 3, CV_32FC1);
   std::vector<float> ks;
@@ -235,10 +291,14 @@ public:
 
     outInfo("Found " << t_segments.size() << " transparent segments");
 
+    // Camera
+    cv::Mat K_ref = (cv::Mat_<double>(3, 3) << 570.3422241210938, 0.0, 319.5, 0.0, 570.3422241210938, 239.5, 0.0, 0.0, 1.0);
+    cv::Mat distortion = (cv::Mat_<double>(5, 1) << 0, 0, 0, 0, 0);
+
     this->segments.clear();
-    this->fitted_silhouettes.clear();
+    // this->fitted_silhouettes.clear();
     this->labels.clear();
-    this->affine_mesh_transforms.clear();
+    // this->affine_mesh_transforms.clear();
     this->pose_mesh_transforms.clear();
     for (auto &t_segment : t_segments) {
       rs::Segment segment = t_segment.segment.get();
@@ -253,70 +313,71 @@ public:
 
       outInfo("\tSilhouette of " << silhouette.size() << " points");
 
-      // try to fit silhouette
-      std::string model_name;
-      size_t pose_index;
-      double fitness;
-
-      std::tie(model_name, pose_index, fitness) = getBestFitnessResult(silhouette);
-
-      outInfo("\tProbably it is " << model_name << "; score: " << fitness);
       ImageSegmentation::Segment i_segment;
       rs::conversion::from(segment, i_segment);
       this->segments.push_back(i_segment);
-      this->labels.push_back(model_name);
 
-      outInfo("Trace 1");
+      ::PoseRanking ranking;
 
-      ::Silhouettef &sil = edge_models[model_name].items[pose_index].contour;
-      auto &mesh = edge_models[model_name].mesh;
-      ::Pose &pose = edge_models[model_name].items[pose_index].pose;
-      assert(mesh.points.size() >= 4);
+      for (const auto &kv : this->edge_models) {
+        auto &mesh = kv.second.mesh;
+        assert(mesh.points.size() >= 4);
 
-      cv::Mat pr_trans = procrustesTransform(sil, silhouette);
-      std::cout << pr_trans << std::endl;
-      this->fitted_silhouettes.push_back(transform(pr_trans, sil));
+        for (auto it = kv.second.items.cbegin(); it != kv.second.items.cend(); it = std::next(it)) {
+          ::PoseHypothesis hypothesis;
+          hypothesis.model_name = kv.first;
 
-      outInfo("Trace 2");
+          cv::Mat pr_trans = procrustesTransform(it->contour, silhouette);
 
-      std::vector<cv::Point2f> points_2d;
-      outInfo("t_vec: " << pose.trans << "\t r_vec: " << pose.rot);
-      cv::projectPoints(mesh.points, pose.rot, pose.trans, silhouette_camera.matrix, silhouette_camera.ks, points_2d);
-      points_2d = transform(pr_trans, points_2d);
+          std::vector<cv::Point2f> points_2d;
 
-      // Camera
-      cv::Mat K_ref = (cv::Mat_<double>(3, 3) << 570.3422241210938, 0.0, 319.5, 0.0, 570.3422241210938, 239.5, 0.0, 0.0, 1.0);
-      // cv::Mat K_ref = (cv::Mat_<double>(3, 3) << 320, 0.0, 320, 0.0, 320, 240, 0.0, 0.0, 1.0);
-      cv::Mat dis = (cv::Mat_<double>(4, 1) << 0, 0, 0, 0);
+          cv::projectPoints(mesh.points, it->pose.rot, it->pose.trans, silhouette_camera.matrix, silhouette_camera.ks, points_2d);
+          points_2d = transform(pr_trans, points_2d);
 
-      outInfo("Trace 4");
+          cv::Mat r_vec(3, 1, cv::DataType<double>::type);
+          cv::Mat t_vec(3, 1, cv::DataType<double>::type);
 
-      cv::Mat r_vec(3, 1, cv::DataType<double>::type);
-      cv::Mat t_vec(3, 1, cv::DataType<double>::type);
-      cv::solvePnP(mesh.points, points_2d, K_ref, dis, r_vec, t_vec);
+          cv::solvePnP(mesh.points, points_2d, K_ref, distortion, r_vec, t_vec);
 
+          Pose pose_3d;
 
-      r_vec.convertTo(r_vec, CV_32FC1);
-      t_vec.convertTo(t_vec, CV_32FC1);
-      outInfo("t_vec: " << t_vec << "\t r_vec: " << r_vec);
+          for (int i = 0; i < 3; ++i) {
+            pose_3d.rot(i) = r_vec.at<double>(i);
+            pose_3d.trans(i) = t_vec.at<double>(i);
+          }
 
-      outInfo("Trace 5");
+          hypothesis.pose = pose_3d;
+
+          double probability, confidence;
+          Silhouettef trans_mesh_sil; // TODO: get transformed mesh silhouette
+          std::tie(probability, confidence) = getChamferDistance(trans_mesh_sil, silhouette, cas_image_depth.size());
+
+          hypothesis.probability = probability*confidence;
+
+          ranking.addElement(hypothesis);
+        }
+      }
+
+      // ranking.normalize();
+
+      // TODO: plot ranking distribution
+
+      auto hypothesis = ranking.getTop();
+
+      this->labels.push_back(hypothesis.model_name);
+      this->pose_mesh_transforms.push_back(hypothesis.pose);
+
+      outInfo("\tProbably it is " << hypothesis.model_name << "; score: " << hypothesis.probability);
+
 
       cv::Mat affine_3d_transform(3, 4, CV_32FC1);
-      cv::Rodrigues(r_vec, affine_3d_transform.colRange(0, 3));
-      affine_3d_transform.at<float>(0, 3) = t_vec.at<float>(0);
-      affine_3d_transform.at<float>(1, 3) = t_vec.at<float>(1);
-      affine_3d_transform.at<float>(2, 3) = t_vec.at<float>(2);
+      cv::Rodrigues(hypothesis.pose.rot, affine_3d_transform.colRange(0, 3));
+      affine_3d_transform.at<float>(0, 3) = hypothesis.pose.trans(0);
+      affine_3d_transform.at<float>(1, 3) = hypothesis.pose.trans(1);
+      affine_3d_transform.at<float>(2, 3) = hypothesis.pose.trans(2);
 
       std::cout << affine_3d_transform << std::endl;
       this->affine_mesh_transforms.push_back(affine_3d_transform);
-
-      Pose pose_3d;
-      for (int i = 0; i < 3; ++i) {
-        pose_3d.rot(i) = r_vec.at<float>(i);
-        pose_3d.trans(i) = t_vec.at<float>(i);
-      }
-      this->pose_mesh_transforms.push_back(pose_3d);
 
       // break;
     }
@@ -328,34 +389,13 @@ public:
 
 protected:
   void drawImageWithLock(cv::Mat &disp) override {
-/*    auto seg_size = silhouette_image_size+silhouette_margin_size*2+1;
-    cv::Mat whole_image = cv::Mat::zeros(seg_size*rotation_axis_samples,
-      seg_size*rotation_angle_samples, CV_8UC1);
-
-    if (!this->edge_models.empty()) {
-      auto edge_model_it = this->edge_models.begin();
-      // TODO: cyclic std::advance(edge_model_it) each N seconds
-
-      int i = 0;
-      for (auto kv : edge_model_it->second.items) {
-        auto ix = (i % rotation_angle_samples)*seg_size;
-        auto iy = (i / rotation_angle_samples)*seg_size;
-        i++;
-
-        kv.img.copyTo(whole_image.colRange(ix, ix+kv.img.cols).
-          rowRange(iy, iy+kv.img.rows));
-      }
-    }
-
-    cv::cvtColor(whole_image, disp, CV_GRAY2BGR);*/
-
     disp = image_rgb;
     ImageSegmentation::drawSegments2D(disp, this->segments, this->labels, 1, 0.5);
 
-    for (const auto &sil : this->fitted_silhouettes) {
+/*    for (const auto &sil : this->fitted_silhouettes) {
       for (auto &pt : sil)
         cv::circle(disp, pt, 1, cv::Scalar(255, 0, 255), -1);
-    }
+    }*/
 
     int i = 0;
     for (const auto &name : this->labels) {
@@ -387,14 +427,7 @@ protected:
 
     std::vector<cv::Point2f> vertice_2d;
 
-    // FIXME: shift and scale points to dst size
-    // cv::Mat draw_cam_matrix = (cv::Mat_<double>(3, 3) << 320, 0.0, 320, 0.0, 320, 240, 0.0, 0.0, 1.0);
     cv::Mat draw_cam_matrix = (cv::Mat_<double>(3, 3) << 570.3422241210938, 0.0, 319.5, 0.0, 570.3422241210938, 239.5, 0.0, 0.0, 1.0);
-    // cv::Mat draw_cam_matrix = cv::Mat::eye(3, 3, CV_32FC1);
-    // draw_cam_matrix.at<float>(0, 2) = dst.cols/2.f;
-    // draw_cam_matrix.at<float>(1, 2) = dst.rows/2.f;
-    // draw_cam_matrix.at<float>(0, 0) = dst.cols/2.f;
-    // draw_cam_matrix.at<float>(1, 1) = dst.cols/2.f;
     cv::projectPoints(vertice, pose.rot, pose.trans, draw_cam_matrix, {}, vertice_2d);
 
     cv::Vec3f light = cv::normalize(cv::Vec3f(1, 1, 1));
@@ -723,7 +756,7 @@ protected:
     return std::tuple<std::string, size_t, double>{best_model_name, best_pose_index, best_fitness_score};
   }
 
-  static std::pair<cv::Vec2f, float> getMeanAndDev(::Silhouettef &sil) {
+  static std::pair<cv::Vec2f, float> getMeanAndDev(const ::Silhouettef &sil) {
     cv::Point2f mean = std::accumulate(sil.cbegin(), sil.cend(), cv::Point2f());
     mean *= (1.f / sil.size());
 
@@ -736,7 +769,7 @@ protected:
     return std::make_pair(mean, std_dev);
   }
 
-  static cv::Mat procrustesTransform(::Silhouettef &sil, ::Silhouettef &tmplt) {
+  static cv::Mat procrustesTransform(const ::Silhouettef &sil, const ::Silhouettef &tmplt) {
     cv::Vec2f mean_s, mean_t;
     float deviation_s, deviation_t;
 
@@ -761,6 +794,38 @@ protected:
     return sil_to_tmplt_transformation;
   }
 
+  static std::pair<double, double> getChamferDistance(::Silhouettef &a, ::Silhouettef &b, cv::Size work_area) {
+    throw std::runtime_error("Not implemented");
+
+    size_t distance_sum = 0;
+    size_t num_points_hit = 0;
+
+    cv::Mat dist_map = cv::Mat::ones(work_area, CV_16UC1);
+    for (auto it = b.begin(); it != std::prev(b.end()); it = std::next(it))
+      cv::line(dist_map, *it, *std::next(it), cv::Scalar(0));
+    cv::line(dist_map, b.back(), b.front(), cv::Scalar(0));
+
+    cv::distanceTransform(dist_map, dist_map, CV_DIST_L2, 3);
+
+    auto work_rect = cv::Rect(cv::Point(0, 0), work_area);
+    for (const auto &pt : a) {
+      auto pti = cv::Point(pt.x, pt.y);
+      if (work_rect.contains(pti)) {
+        distance_sum += dist_map.at<int16_t>(pti);
+        num_points_hit += 1;
+      }
+    }
+
+    double confidence = static_cast<double>(num_points_hit) / a.size();
+
+    if (confidence == 0)
+      throw std::runtime_error("input contour is too large or contains no points");
+
+    double distance = static_cast<double>(distance_sum) / num_points_hit;
+
+    return std::make_pair(distance, confidence);
+  }
+
 private:
   std::string cache_path{"/tmp"};
   int rotation_axis_samples{10};
@@ -773,7 +838,8 @@ private:
   std::map<std::string, EdgeModel> edge_models;
 
   std::vector<ImageSegmentation::Segment> segments;
-  std::vector<Silhouettef> fitted_silhouettes;
+  // std::vector<::PoseRanking> rankings;
+  // std::vector<Silhouettef> fitted_silhouettes;
   std::vector<cv::Mat> affine_mesh_transforms;
   std::vector<::Pose> pose_mesh_transforms;
   std::vector<std::string> labels;
