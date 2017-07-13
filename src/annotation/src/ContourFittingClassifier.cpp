@@ -362,6 +362,8 @@ public:
 
       // TODO: plot ranking distribution
 
+      ranking.filter(0.1); // TODO: find the right confidence level
+
       auto hypothesis = ranking.getTop();
 
       this->labels.push_back(hypothesis.model_name);
