@@ -48,11 +48,13 @@ cv::Vec3f transform(cv::Mat &M, const cv::Vec3f &vec);
 ::Silhouettef transform(cv::Mat &M, const ::Silhouettef &sil);
 ::Silhouettef transform(cv::Mat &M, const ::Silhouette &sil);
 std::vector<cv::Point3f> transform(cv::Mat &M, const std::vector<cv::Point3f> &points);
+::Silhouettef normalizeSilhouette(const ::Silhouettef &shape);
 cv::Rect_<float> getBoundingRect(::Silhouettef &sil);
 
 struct Footprint {
   cv::Mat img;
   Silhouettef contour;
+  Silhouettef normalized_contour;
   Pose pose;
   // cv::Mat camera_matrix;
 };
@@ -62,8 +64,10 @@ class EdgeModel {
   public: Mesh mesh;
 
   public: void addFootprint(cv::Mat &footprint, const Silhouettef &contour, const Pose &pose) {
-    if (contour.size() > 0)
-      this->items.push_back({footprint.clone(), contour, pose});
+    if (contour.size() > 0) {
+      auto normalized_contour = normalizeSilhouette(contour);
+      this->items.push_back({footprint.clone(), contour, normalized_contour, pose});
+    }
   }
 
   public: void saveToFile(std::string name) {
@@ -110,6 +114,7 @@ class EdgeModel {
     }
 
     auto img = drawFootprint(contour);
+
     this->addFootprint(img, contour, pose);
 
     return true;
@@ -403,7 +408,7 @@ protected:
     for (const auto &name : this->labels) {
       outInfo("draw");
       Camera cam;
-      drawMesh(disp, cam, this->edge_models[name].mesh, this->affine_mesh_transforms[i], this->pose_mesh_transforms[i]);
+      // drawMesh(disp, cam, this->edge_models[name].mesh, this->affine_mesh_transforms[i], this->pose_mesh_transforms[i]);
       ++i;
     }
   }
@@ -609,35 +614,13 @@ protected:
     cv::Mat bounding_matrix_inv = (cv::Mat_<float>(3, 3) << 1/rate, 0, b_rect.x - marg_size/rate,
                                                             0, 1/rate, b_rect.y - marg_size/rate, 0 , 0, 1);
     Silhouettef contour = transform(bounding_matrix_inv, contours[0]);
+    Silhouettef normalized_contour = normalizeSilhouette(contour);
 
     cv::Mat mkernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3));
     cv::morphologyEx(footprint, footprint, cv::MORPH_GRADIENT, mkernel,
       cv::Point(-1,-1), 1);
 
-    return {footprint, contour, pose};
-  }
-
-  static ::Silhouettef normalizeSilhouette(const ::Silhouettef &shape) {
-    ::Silhouettef result;
-    for (const auto &pt : shape)
-      result.push_back(pt);
-
-    cv::Point2f mean = std::accumulate(shape.cbegin(), shape.cend(), cv::Point2f());
-    mean *= (1.f / shape.size());
-
-    float std_dev = 0;
-
-    for (auto &pt : result) {
-      pt = pt - mean;
-      std_dev += std::pow(cv::norm(pt), 2);
-    }
-
-    std_dev = std::sqrt(std_dev / shape.size());
-
-    for (auto &pt : result)
-      pt *= 1.f / std_dev;
-
-    return result;
+    return {footprint, contour, normalized_contour, pose};
   }
 
 #if !PCL_SEGFAULT_WORKAROUND
@@ -690,17 +673,17 @@ protected:
 
 #else
 
-  static std::pair<cv::Mat, double> fitICP(::Silhouettef &test, ::Silhouettef &model) {
+  static std::pair<cv::Mat, double> fitICP(const ::Silhouettef &test, const ::Silhouettef &model) {
 
     std::vector<double> test_arr;
     std::vector<double> model_arr;
 
-    for (auto &pt : test) {
+    for (const auto &pt : test) {
       test_arr.push_back(pt.x);
       test_arr.push_back(pt.y);
     }
 
-    for (auto &pt : model) {
+    for (const auto &pt : model) {
       model_arr.push_back(pt.x);
       model_arr.push_back(pt.y);
     }
@@ -728,30 +711,30 @@ protected:
   }
 #endif
 
-  static double getFitnessScore(const ::Silhouettef &a, const ::Silhouettef &b) {
-    ::Silhouettef na = normalizeSilhouette(a);
-    ::Silhouettef nb = normalizeSilhouette(b);
-
-    auto transform__score = fitICP(na, nb);
+  static double getFitnessScoreN(const ::Silhouettef &a, const ::Silhouettef &b) {
+    auto transform__score = fitICP(a, b);
 
     return transform__score.second;
   }
 
-  std::tuple<std::string, size_t, double> getBestFitnessResult(const Silhouettef &shape) {
+  std::tuple<std::string, size_t, double> getBestFitnessResultN(const Silhouettef &nshape) {
     std::string best_model_name;
     size_t best_pose_index{0};
     double best_fitness_score{std::numeric_limits<double>::max()};
 
     for (const auto &kv : this->edge_models) {
-      for (auto it = kv.second.items.cbegin(); it != kv.second.items.cend(); it = std::next(it)) {
-        // outInfo("pose " << std::distance(kv.second.items.cbegin(), it));
-        auto score = getFitnessScore(shape, it->contour);
+      std::vector<double> scores(kv.second.items.size());
 
-        if (score < best_fitness_score) {
-          best_fitness_score = score;
-          best_model_name = kv.first;
-          best_pose_index = std::distance(kv.second.items.cbegin(), it);
-        }
+      #pragma omp parallel for
+      for (int i = 0; i < kv.second.items.size(); ++i) {
+        scores[i] = getFitnessScoreN(nshape, kv.second.items[i].normalized_contour);
+      }
+
+      auto it = std::min_element(scores.cbegin(), scores.cend());
+      if (*it < best_fitness_score) {
+        best_fitness_score = *it;
+        best_model_name = kv.first;
+        best_pose_index = std::distance(scores.cbegin(), it);
       }
     }
 
@@ -909,6 +892,29 @@ std::vector<cv::Point3f> transform(cv::Mat &M, const std::vector<cv::Point3f> &p
 
   for (const auto &pt : points)
     result.push_back(transform(M, pt));
+
+  return result;
+}
+
+::Silhouettef normalizeSilhouette(const ::Silhouettef &shape) {
+  ::Silhouettef result;
+  for (const auto &pt : shape)
+    result.push_back(pt);
+
+  cv::Point2f mean = std::accumulate(shape.cbegin(), shape.cend(), cv::Point2f());
+  mean *= (1.f / shape.size());
+
+  float std_dev = 0;
+
+  for (auto &pt : result) {
+    pt = pt - mean;
+    std_dev += std::pow(cv::norm(pt), 2);
+  }
+
+  std_dev = std::sqrt(std_dev / shape.size());
+
+  for (auto &pt : result)
+    pt *= 1.f / std_dev;
 
   return result;
 }
