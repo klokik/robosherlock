@@ -349,7 +349,8 @@ public:
         auto &mesh = kv.second.mesh;
         assert(mesh.points.size() >= 4);
 
-        for (auto it = kv.second.items.cbegin(); it != kv.second.items.cend(); it = std::next(it)) {
+        #pragma omp parallel for
+        for (auto it = kv.second.items.cbegin(); it < kv.second.items.cend(); ++it) {
           ::PoseHypothesis hypothesis;
           hypothesis.model_name = kv.first;
 
