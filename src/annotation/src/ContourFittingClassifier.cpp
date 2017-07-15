@@ -160,14 +160,23 @@ class PoseRanking {
     return result;
   }
 
-/*  public: void normalize() {
-    double prob_sum = std::accumulate(this->hypotheses.begin(), this->hypotheses.end(), 0,
-      [](const double sum, const ::PoseHypothesis &a) {
-        return sum + a.probability; });
+  // in l_infinity sense
+  public: void normalize() {
+    double prob_sum = std::accumulate(this->hypotheses.begin(), this->hypotheses.end(), 0.,
+      [](const double acc, const ::PoseHypothesis &a) {
+        return std::max(acc, a.probability); });
 
-    for (auto &hyp : this->hypotheses)
-      hyp.probability /= prob_sum;
-  }*/
+    decltype(this->hypotheses) normalised;
+
+    for (auto &hyp : this->hypotheses) {
+      auto tmp = hyp;
+      tmp.probability /= prob_sum;
+
+      normalised.insert(tmp);
+    }
+
+    this->hypotheses = normalised;
+  }
 
   public: void filter(const double level) noexcept {
     while (true) {
@@ -180,6 +189,10 @@ class PoseRanking {
 
       this->hypotheses.erase(it);
     }
+  }
+
+  public: size_t size() const noexcept{
+    return this->hypotheses.size();
   }
 
   private: class LessProbable {
@@ -300,12 +313,20 @@ public:
     cv::Mat K_ref = (cv::Mat_<double>(3, 3) << 570.3422241210938, 0.0, 319.5, 0.0, 570.3422241210938, 239.5, 0.0, 0.0, 1.0);
     cv::Mat distortion = (cv::Mat_<double>(5, 1) << 0, 0, 0, 0, 0);
 
+    ::Camera world_camera;
+    world_camera.matrix = K_ref;
+    //world_camera.ks = {};
+
     this->segments.clear();
     // this->fitted_silhouettes.clear();
     this->labels.clear();
     // this->affine_mesh_transforms.clear();
     this->pose_mesh_transforms.clear();
+    this->histograms.clear();
+    int i = 0;
     for (auto &t_segment : t_segments) {
+      // if (i++ != 2)
+      //   continue;
       rs::Segment segment = t_segment.segment.get();
 
       ::Silhouettef silhouette;
@@ -353,27 +374,49 @@ public:
 
           hypothesis.pose = pose_3d;
 
-          double probability, confidence;
-          Silhouettef trans_mesh_sil; // TODO: get transformed mesh silhouette
-          std::tie(probability, confidence) = getChamferDistance(trans_mesh_sil, silhouette, cas_image_depth.size());
+          double distance, confidence;
+          auto trans_mesh_fp = getFootprint(mesh, pose_3d, world_camera, 64, 4);
+          std::tie(distance, confidence) = getChamferDistance(trans_mesh_fp.contour, silhouette, cas_image_depth.size());
 
-          hypothesis.probability = probability*confidence;
+          hypothesis.probability = (1 / (distance + 0.01)) * confidence;
 
           ranking.addElement(hypothesis);
         }
       }
 
-      // ranking.normalize();
+      ranking.filter(0.001); // TODO: find the right confidence level
 
-      // TODO: plot ranking distribution
+      if (ranking.size() == 0) {
+        outInfo("Low probable silhouette -> rejecting");
+        continue;
+      }
 
-      ranking.filter(0.1); // TODO: find the right confidence level
+      ranking.normalize();
+
+      double norm_confidence_level = 0.95;  // TODO: find the right confidence level
+
+      // plot ranking distribution
+      auto ranks = ranking.getTop(100);
+      int hsize = ranks.size();
+      cv::Mat hist(hsize, hsize, CV_8UC3, cv::Scalar(0, 0, 0));
+      int i = 0;
+      for (auto &re : ranks) {
+        float x = i;
+        float y = hsize - re.probability*hsize;
+        auto color = (re.probability > norm_confidence_level ? cv::Scalar(0, 128, 0) : cv::Scalar(0, 0, 128));
+        cv::line(hist, cv::Point(x, hsize-1), cv::Point(x, y), color, 1);
+        i++;
+      }
+      this->histograms.push_back(hist);
+
+      ranking.filter(norm_confidence_level);
 
       auto hypothesis = ranking.getTop();
 
       this->labels.push_back(hypothesis.model_name);
       this->pose_mesh_transforms.push_back(hypothesis.pose);
 
+      outInfo("Found " << ranking.size() << " probable poses");
       outInfo("\tProbably it is " << hypothesis.model_name << "; score: " << hypothesis.probability);
 
 
@@ -385,7 +428,6 @@ public:
 
       std::cout << affine_3d_transform << std::endl;
       this->affine_mesh_transforms.push_back(affine_3d_transform);
-
       // break;
     }
 
@@ -396,19 +438,30 @@ public:
 
 protected:
   void drawImageWithLock(cv::Mat &disp) override {
+    // disp = this->displ;
+    // return;
     disp = image_rgb;
     ImageSegmentation::drawSegments2D(disp, this->segments, this->labels, 1, 0.5);
 
-/*    for (const auto &sil : this->fitted_silhouettes) {
-      for (auto &pt : sil)
-        cv::circle(disp, pt, 1, cv::Scalar(255, 0, 255), -1);
-    }*/
+    // return;
+    // for (const auto &sil : this->fitted_silhouettes) {
+    //   for (auto &pt : sil)
+    //     cv::circle(disp, pt, 1, cv::Scalar(255, 0, 255), -1);
+    // }
 
     int i = 0;
     for (const auto &name : this->labels) {
       outInfo("draw");
       Camera cam;
-      // drawMesh(disp, cam, this->edge_models[name].mesh, this->affine_mesh_transforms[i], this->pose_mesh_transforms[i]);
+      drawMesh(disp, cam, this->edge_models[name].mesh, this->affine_mesh_transforms[i], this->pose_mesh_transforms[i]);
+
+      auto &seg_center = segments[i].center;
+      cv::Rect hist_dst_rect(cv::Point(seg_center.x, seg_center.y + 5 + segments[i].rect.height/2), histograms[i].size());
+      hist_dst_rect = hist_dst_rect & cv::Rect(cv::Point(), disp.size());
+      disp(hist_dst_rect) *= 0.5;
+      cv::Rect hist_src_rect = (hist_dst_rect - hist_dst_rect.tl()) & cv::Rect(cv::Point(), histograms[i].size());
+      disp(hist_dst_rect) += histograms[i](hist_src_rect);
+
       ++i;
     }
   }
@@ -440,7 +493,7 @@ protected:
     cv::Vec3f light = cv::normalize(cv::Vec3f(1, 1, 1));
 
     float alpha = 0.3f;
-    for (const auto &tri : mesh.triangles) {
+/*    for (const auto &tri : mesh.triangles) {
       cv::Vec3f avg_normal = (normal[tri[0]] + normal[tri[1]] + normal[tri[2]]) / 3;
 
       float brightness = avg_normal.dot(light);
@@ -455,11 +508,11 @@ protected:
       cv::fillConvexPoly(mask, poly, color);
 
       dst += mask*alpha;
-    }
+    }*/
 
-    // for (const auto &pt2 : vertice_2d) {
-    //   cv::circle(dst, pt2, 1, cv::Scalar(0, 255, 0), -1);
-    // }
+    for (const auto &pt2 : vertice_2d) {
+      cv::circle(dst, pt2, 1, cv::Scalar(0, 255, 0), -1);
+    }
   }
 
   ::Mesh readTrainingMesh(std::string _filename) {
@@ -779,24 +832,27 @@ protected:
     return sil_to_tmplt_transformation;
   }
 
-  static std::pair<double, double> getChamferDistance(::Silhouettef &a, ::Silhouettef &b, cv::Size work_area) {
-    throw std::runtime_error("Not implemented");
-
-    size_t distance_sum = 0;
+  std::pair<double, double> getChamferDistance(::Silhouettef &a, ::Silhouettef &b, cv::Size work_area) {
+    double distance_sum = 0;
     size_t num_points_hit = 0;
 
-    cv::Mat dist_map = cv::Mat::ones(work_area, CV_16UC1);
+    cv::Mat sil_map_b = cv::Mat::ones(work_area, CV_8UC1);
     for (auto it = b.begin(); it != std::prev(b.end()); it = std::next(it))
-      cv::line(dist_map, *it, *std::next(it), cv::Scalar(0));
-    cv::line(dist_map, b.back(), b.front(), cv::Scalar(0));
+      cv::line(sil_map_b, *it, *std::next(it), cv::Scalar(0));
+    cv::line(sil_map_b, b.back(), b.front(), cv::Scalar(0));
 
-    cv::distanceTransform(dist_map, dist_map, CV_DIST_L2, 3);
+    auto rect_a = ::getBoundingRect(a);
+    auto rect_b = ::getBoundingRect(b);
+    cv::Rect roi = (rect_a | rect_b) & cv::Rect_<float>(cv::Point(0, 0), work_area);
+
+    cv::Mat dist_map_b = cv::Mat(sil_map_b.size(), CV_32FC1, cv::Scalar(0.f));
+    cv::distanceTransform(sil_map_b(roi), dist_map_b(roi), CV_DIST_L2, 3);
 
     auto work_rect = cv::Rect(cv::Point(0, 0), work_area);
     for (const auto &pt : a) {
       auto pti = cv::Point(pt.x, pt.y);
       if (work_rect.contains(pti)) {
-        distance_sum += dist_map.at<int16_t>(pti);
+        distance_sum += dist_map_b.at<float>(pti);
         num_points_hit += 1;
       }
     }
@@ -806,7 +862,7 @@ protected:
     if (confidence == 0)
       throw std::runtime_error("input contour is too large or contains no points");
 
-    double distance = static_cast<double>(distance_sum) / num_points_hit;
+    double distance = distance_sum / num_points_hit;
 
     return std::make_pair(distance, confidence);
   }
@@ -828,8 +884,10 @@ private:
   std::vector<cv::Mat> affine_mesh_transforms;
   std::vector<::Pose> pose_mesh_transforms;
   std::vector<std::string> labels;
+  std::vector<cv::Mat> histograms;
 
   cv::Mat image_rgb;
+  cv::Mat displ = cv::Mat(480, 640, CV_8UC3);
 
   ::Camera silhouette_camera;
 };
