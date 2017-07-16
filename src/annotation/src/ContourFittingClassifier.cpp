@@ -50,6 +50,7 @@ cv::Vec3f transform(const cv::Mat &M, const cv::Vec3f &vec);
 std::vector<cv::Point3f> transform(const cv::Mat &M, const std::vector<cv::Point3f> &points);
 ::Silhouettef normalizeSilhouette(const ::Silhouettef &shape);
 cv::Rect_<float> getBoundingRect(const ::Silhouettef &sil);
+cv::Mat poseToAffine(const ::Pose &pose);
 
 struct Footprint {
   cv::Mat img;
@@ -161,8 +162,8 @@ class PoseRanking {
   }
 
   // in l_infinity sense
-  public: void normalize() {
-    double prob_sum = std::accumulate(this->hypotheses.begin(), this->hypotheses.end(), 0.,
+  public: double normalize() {
+    double prob_norm = std::accumulate(this->hypotheses.begin(), this->hypotheses.end(), 0.,
       [](const double acc, const ::PoseHypothesis &a) {
         return std::max(acc, a.probability); });
 
@@ -170,12 +171,14 @@ class PoseRanking {
 
     for (auto &hyp : this->hypotheses) {
       auto tmp = hyp;
-      tmp.probability /= prob_sum;
+      tmp.probability /= prob_norm;
 
       normalised.insert(tmp);
     }
 
     this->hypotheses = normalised;
+
+    return prob_norm;
   }
 
   public: void filter(const double level) noexcept {
@@ -325,13 +328,12 @@ public:
     this->segments.clear();
     // this->fitted_silhouettes.clear();
     this->labels.clear();
-    this->affine_mesh_transforms.clear();
-    this->pose_mesh_transforms.clear();
+    // this->affine_mesh_transforms.clear();
+    // this->pose_mesh_transforms.clear();
+    this->pose_hypotheses.clear();
     this->histograms.clear();
     int i = 0;
     for (auto &t_segment : t_segments) {
-      // if (i++ != 2)
-      //   continue;
       rs::Segment segment = t_segment.segment.get();
 
       ::Silhouettef silhouette;
@@ -349,6 +351,10 @@ public:
       this->segments.push_back(i_segment);
 
       ::PoseRanking ranking;
+
+      // will be reinitialised by first chamfer distance call
+      cv::Mat dist_transform(0, 0, CV_32FC1);
+      getChamferDistance(silhouette, silhouette, cas_image_depth.size(), dist_transform);
 
       for (const auto &kv : this->edge_models) {
         auto &mesh = kv.second.mesh;
@@ -382,24 +388,23 @@ public:
 
           double distance, confidence;
           auto trans_mesh_fp = getFootprint(mesh, pose_3d, world_camera, 64, 4);
-          std::tie(distance, confidence) = getChamferDistance(trans_mesh_fp.contour, silhouette, cas_image_depth.size());
+          std::tie(distance, confidence) = getChamferDistance(trans_mesh_fp.contour, silhouette, cas_image_depth.size(), dist_transform);
 
           hypothesis.probability = (1 / (distance + 0.01)) * confidence;
 
+          #pragma omp critical
           ranking.addElement(hypothesis);
         }
       }
 
       ranking.filter(0.001); // TODO: find the right confidence level
 
-      if (ranking.size() == 0) {
-        outInfo("Low probable silhouette -> rejecting");
-        continue;
-      }
+      if (ranking.size() == 0)
+        outInfo("Low probable silhouette");
 
-      ranking.normalize();
+      auto max_pr = ranking.normalize();
 
-      double norm_confidence_level = 0.95;  // TODO: find the right confidence level
+      double norm_confidence_level = 0.90;  // TODO: find the right confidence level
 
       // plot ranking distribution
       auto ranks = ranking.getTop(100);
@@ -416,25 +421,15 @@ public:
       this->histograms.push_back(hist);
 
       ranking.filter(norm_confidence_level);
+      this->pose_hypotheses.push_back(ranking.getTop(100));
 
-      auto hypothesis = ranking.getTop();
+      if (ranking.size() > 0) {
+        auto top_hypothesis = ranking.getTop();
+        this->labels.push_back(top_hypothesis.model_name);
 
-      this->labels.push_back(hypothesis.model_name);
-      this->pose_mesh_transforms.push_back(hypothesis.pose);
-
-      outInfo("Found " << ranking.size() << " probable poses");
-      outInfo("\tProbably it is " << hypothesis.model_name << "; score: " << hypothesis.probability);
-
-
-      cv::Mat affine_3d_transform(3, 4, CV_32FC1);
-      cv::Rodrigues(hypothesis.pose.rot, affine_3d_transform.colRange(0, 3));
-      affine_3d_transform.at<float>(0, 3) = hypothesis.pose.trans(0);
-      affine_3d_transform.at<float>(1, 3) = hypothesis.pose.trans(1);
-      affine_3d_transform.at<float>(2, 3) = hypothesis.pose.trans(2);
-
-      std::cout << affine_3d_transform << std::endl;
-      this->affine_mesh_transforms.push_back(affine_3d_transform);
-      // break;
+        outInfo("Found " << ranking.size() << " probable poses");
+        outInfo("\tProbably it is " << top_hypothesis.model_name << "; score: " << max_pr);
+      }
     }
 
     outInfo("took: " << clock.getTime() << " ms.");
@@ -455,11 +450,16 @@ protected:
     //     cv::circle(disp, pt, 1, cv::Scalar(255, 0, 255), -1);
     // }
 
-    int i = 0;
-    for (const auto &name : this->labels) {
+    for (size_t i = 0; i < this->labels.size(); ++i) {
       outInfo("draw");
+      ::PoseHypothesis hyp;
+      if (this->pose_hypotheses[i].size() > 0)
+        hyp = this->pose_hypotheses[i].front();
+      else
+        continue;
+
       Camera cam;
-      drawMesh(disp, cam, this->edge_models[name].mesh, this->affine_mesh_transforms[i], this->pose_mesh_transforms[i]);
+      drawMesh(disp, cam, this->edge_models[this->labels[i]].mesh, hyp.pose);
 
       auto &seg_center = segments[i].center;
       cv::Rect hist_dst_rect(cv::Point(seg_center.x, seg_center.y + 5 + segments[i].rect.height/2), histograms[i].size());
@@ -467,12 +467,11 @@ protected:
       disp(hist_dst_rect) *= 0.5;
       cv::Rect hist_src_rect = (hist_dst_rect - hist_dst_rect.tl()) & cv::Rect(cv::Point(), histograms[i].size());
       disp(hist_dst_rect) += histograms[i](hist_src_rect);
-
-      ++i;
     }
   }
 
-  static std::tuple<pcl::PointCloud<pcl::PointXYZRGBA>::Ptr, std::vector<pcl::Vertices>> meshToPCLMesh(const ::Mesh &mesh, const cv::Mat &trans) {
+  static std::tuple<pcl::PointCloud<pcl::PointXYZRGBA>::Ptr, std::vector<pcl::Vertices>>
+    meshToPCLMesh(const ::Mesh &mesh, const cv::Mat &trans, const float tint) {
     std::vector<pcl::Vertices> polygons;
 
     for (const auto &tri : mesh.triangles) {
@@ -484,7 +483,6 @@ protected:
       polygons.push_back(vtc);
     }
 
-    // TODO: push transformed mesh points to pcl_mesh cloud
     pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloud {new pcl::PointCloud<pcl::PointXYZRGBA>};
     cloud->width = mesh.points.size();
     cloud->height = 1;
@@ -498,9 +496,9 @@ protected:
       cpt.x = -pt.x;
       cpt.y = -pt.y;
       cpt.z = -pt.z;
-      cpt.r = 128;
-      cpt.g = 128;
-      cpt.b = 128;
+      cpt.r = 255*tint;
+      cpt.g = 255*tint;
+      cpt.b = 255*tint;
       cpt.a = 255;
     }
 
@@ -522,37 +520,44 @@ protected:
     }
 
     int i = 0;
-    for (const auto &name : this->labels) {
-      std::string pcl_mesh_name = "_" + std::to_string(i);
-      pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloud;
-      std::vector<pcl::Vertices> polygons;
-      std::tie(cloud, polygons) = meshToPCLMesh(this->edge_models[name].mesh, this->affine_mesh_transforms[i]);
+    for (const auto &seg_hyp : this->pose_hypotheses) {
+      for (const auto &hyp : seg_hyp) {
+        std::string pcl_mesh_name = "_" + std::to_string(i);
+        pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloud;
+        std::vector<pcl::Vertices> polygons;
 
-      visualizer.removeShape(pcl_mesh_name);
-      assert(visualizer.addPolygonMesh<pcl::PointXYZRGBA>(cloud, polygons, pcl_mesh_name));
+        cv::Mat affine_3d_transform = poseToAffine(hyp.pose);
+        std::tie(cloud, polygons) = meshToPCLMesh(this->edge_models[hyp.model_name].mesh,
+                                                  affine_3d_transform, (hyp.probability - 0.85) / 0.15);
 
-      ++i;
+        visualizer.removeShape(pcl_mesh_name);
+        assert(visualizer.addPolygonMesh<pcl::PointXYZRGBA>(cloud, polygons, pcl_mesh_name));
+
+        ++i;
+      }
     }
   }
 
-  static void drawMesh(cv::Mat &dst, Camera &cam, Mesh &mesh, cv::Mat cam_sp_transform, Pose &pose) {
+  static void drawMesh(cv::Mat &dst, Camera &cam, Mesh &mesh, Pose &pose) {
     std::vector<cv::Point3f> vertice;
     std::vector<cv::Vec3f> normal;
 
     vertice.reserve(mesh.points.size());
-    normal.reserve(mesh.normals.size());
+    // normal.reserve(mesh.normals.size());
 
     assert(vertice.size() == normal.size());
 
+/*    cv::Mat cam_sp_transform = poseToAffine(pose);
+
     auto rect33 = cv::Rect(0, 0, 3, 3);
     cv::Mat cam_sp_rot = cv::Mat::eye(3, 4, CV_32FC1);
-    cam_sp_transform(rect33).copyTo(cam_sp_rot(rect33));
+    cam_sp_transform(rect33).copyTo(cam_sp_rot(rect33));*/
 
     for (const auto &vtx : mesh.points)
       vertice.push_back(vtx);//transform(cam_sp_transform, vtx));
 
-    for (const auto &nrm : mesh.normals)
-      normal.push_back(transform(cam_sp_rot, nrm));
+/*    for (const auto &nrm : mesh.normals)
+      normal.push_back(transform(cam_sp_rot, nrm));*/
 
     std::vector<cv::Point2f> vertice_2d;
 
@@ -561,8 +566,8 @@ protected:
 
     cv::Vec3f light = cv::normalize(cv::Vec3f(1, 1, 1));
 
-    float alpha = 0.3f;
-/*    for (const auto &tri : mesh.triangles) {
+/*    float alpha = 0.3f;
+    for (const auto &tri : mesh.triangles) {
       cv::Vec3f avg_normal = (normal[tri[0]] + normal[tri[1]] + normal[tri[2]]) / 3;
 
       float brightness = avg_normal.dot(light);
@@ -901,27 +906,30 @@ protected:
     return sil_to_tmplt_transformation;
   }
 
-  std::pair<double, double> getChamferDistance(::Silhouettef &a, ::Silhouettef &b, cv::Size work_area) {
+  std::pair<double, double> getChamferDistance(::Silhouettef &a, ::Silhouettef &b, cv::Size work_area, cv::Mat &dist_transform) {
     double distance_sum = 0;
     size_t num_points_hit = 0;
 
-    cv::Mat sil_map_b = cv::Mat::ones(work_area, CV_8UC1);
-    for (auto it = b.begin(); it != std::prev(b.end()); it = std::next(it))
-      cv::line(sil_map_b, *it, *std::next(it), cv::Scalar(0));
-    cv::line(sil_map_b, b.back(), b.front(), cv::Scalar(0));
+    if (dist_transform.cols == 0 || dist_transform.rows == 0) {
+      cv::Mat sil_map_b = cv::Mat::ones(work_area, CV_8UC1);
+      for (auto it = b.begin(); it != std::prev(b.end()); it = std::next(it))
+        cv::line(sil_map_b, *it, *std::next(it), cv::Scalar(0));
+      cv::line(sil_map_b, b.back(), b.front(), cv::Scalar(0));
 
-    auto rect_a = ::getBoundingRect(a);
-    auto rect_b = ::getBoundingRect(b);
-    cv::Rect roi = (rect_a | rect_b) & cv::Rect_<float>(cv::Point(0, 0), work_area);
+      // auto rect_a = ::getBoundingRect(a);
+      // auto rect_b = ::getBoundingRect(b);
+      // cv::Rect roi = (rect_a | rect_b) & cv::Rect_<float>(cv::Point(0, 0), work_area);
 
-    cv::Mat dist_map_b = cv::Mat(sil_map_b.size(), CV_32FC1, cv::Scalar(0.f));
-    cv::distanceTransform(sil_map_b(roi), dist_map_b(roi), CV_DIST_L2, 3);
+      dist_transform = cv::Mat(sil_map_b.size(), CV_32FC1, cv::Scalar(0.f));
+      // cv::distanceTransform(sil_map_b(roi), dist_transform(roi), CV_DIST_L2, 3);
+      cv::distanceTransform(sil_map_b, dist_transform, CV_DIST_L2, 3);
+    }
 
     auto work_rect = cv::Rect(cv::Point(0, 0), work_area);
     for (const auto &pt : a) {
       auto pti = cv::Point(pt.x, pt.y);
       if (work_rect.contains(pti)) {
-        distance_sum += dist_map_b.at<float>(pti);
+        distance_sum += dist_transform.at<float>(pti);
         num_points_hit += 1;
       }
     }
@@ -948,10 +956,10 @@ private:
   std::map<std::string, EdgeModel> edge_models;
 
   std::vector<ImageSegmentation::Segment> segments;
-  // std::vector<::PoseRanking> rankings;
+  std::vector<std::vector<::PoseHypothesis>> pose_hypotheses;
   // std::vector<Silhouettef> fitted_silhouettes;
-  std::vector<cv::Mat> affine_mesh_transforms;
-  std::vector<::Pose> pose_mesh_transforms;
+  // std::vector<cv::Mat> affine_mesh_transforms;
+  // std::vector<::Pose> pose_mesh_transforms;
   std::vector<std::string> labels;
   std::vector<cv::Mat> histograms;
 
@@ -1064,6 +1072,17 @@ cv::Rect_<float> getBoundingRect(const ::Silhouettef &sil) {
   b_rect.height = v_it.second->y - b_rect.y;
 
   return b_rect;
+}
+
+cv::Mat poseToAffine(const ::Pose &pose) {
+  cv::Mat affine_3d_transform(3, 4, CV_32FC1);
+
+  cv::Rodrigues(pose.rot, affine_3d_transform.colRange(0, 3));
+  affine_3d_transform.at<float>(0, 3) = pose.trans(0);
+  affine_3d_transform.at<float>(1, 3) = pose.trans(1);
+  affine_3d_transform.at<float>(2, 3) = pose.trans(2);
+
+  return affine_3d_transform;
 }
 
 // This macro exports an entry point that is used to create the annotator.
