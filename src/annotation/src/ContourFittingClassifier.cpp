@@ -328,11 +328,9 @@ public:
     this->segments.clear();
     // this->fitted_silhouettes.clear();
     this->labels.clear();
-    // this->affine_mesh_transforms.clear();
-    // this->pose_mesh_transforms.clear();
     this->pose_hypotheses.clear();
     this->histograms.clear();
-    int i = 0;
+
     for (auto &t_segment : t_segments) {
       rs::Segment segment = t_segment.segment.get();
 
@@ -958,8 +956,6 @@ private:
   std::vector<ImageSegmentation::Segment> segments;
   std::vector<std::vector<::PoseHypothesis>> pose_hypotheses;
   // std::vector<Silhouettef> fitted_silhouettes;
-  // std::vector<cv::Mat> affine_mesh_transforms;
-  // std::vector<::Pose> pose_mesh_transforms;
   std::vector<std::string> labels;
   std::vector<cv::Mat> histograms;
 
