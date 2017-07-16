@@ -42,14 +42,14 @@ struct Pose {
 using Silhouette = std::vector<cv::Point2i>;
 using Silhouettef = std::vector<cv::Point2f>;
 
-cv::Point2f transform(cv::Mat &M, const cv::Point2f &pt);
-cv::Point3f transform(cv::Mat &M, const cv::Point3f &pt);
-cv::Vec3f transform(cv::Mat &M, const cv::Vec3f &vec);
-::Silhouettef transform(cv::Mat &M, const ::Silhouettef &sil);
-::Silhouettef transform(cv::Mat &M, const ::Silhouette &sil);
-std::vector<cv::Point3f> transform(cv::Mat &M, const std::vector<cv::Point3f> &points);
+cv::Point2f transform(const cv::Mat &M, const cv::Point2f &pt);
+cv::Point3f transform(const cv::Mat &M, const cv::Point3f &pt);
+cv::Vec3f transform(const cv::Mat &M, const cv::Vec3f &vec);
+::Silhouettef transform(const cv::Mat &M, const ::Silhouettef &sil);
+::Silhouettef transform(const cv::Mat &M, const ::Silhouette &sil);
+std::vector<cv::Point3f> transform(const cv::Mat &M, const std::vector<cv::Point3f> &points);
 ::Silhouettef normalizeSilhouette(const ::Silhouettef &shape);
-cv::Rect_<float> getBoundingRect(::Silhouettef &sil);
+cv::Rect_<float> getBoundingRect(const ::Silhouettef &sil);
 
 struct Footprint {
   cv::Mat img;
@@ -303,6 +303,11 @@ public:
 
     cv::resize(cas_image_rgb, image_rgb, cas_image_depth.size());
 
+    if (!cas.get(VIEW_CLOUD, *view_cloud)) {
+      outError("No view point cloud");
+      return UIMA_ERR_NONE;
+    }
+
     rs::Scene scene = cas.getScene();
     std::vector<rs::TransparentSegment> t_segments;
     scene.identifiables.filter(t_segments);
@@ -320,7 +325,7 @@ public:
     this->segments.clear();
     // this->fitted_silhouettes.clear();
     this->labels.clear();
-    // this->affine_mesh_transforms.clear();
+    this->affine_mesh_transforms.clear();
     this->pose_mesh_transforms.clear();
     this->histograms.clear();
     int i = 0;
@@ -462,6 +467,69 @@ protected:
       disp(hist_dst_rect) *= 0.5;
       cv::Rect hist_src_rect = (hist_dst_rect - hist_dst_rect.tl()) & cv::Rect(cv::Point(), histograms[i].size());
       disp(hist_dst_rect) += histograms[i](hist_src_rect);
+
+      ++i;
+    }
+  }
+
+  static std::tuple<pcl::PointCloud<pcl::PointXYZRGBA>::Ptr, std::vector<pcl::Vertices>> meshToPCLMesh(const ::Mesh &mesh, const cv::Mat &trans) {
+    std::vector<pcl::Vertices> polygons;
+
+    for (const auto &tri : mesh.triangles) {
+      pcl::Vertices vtc;
+      vtc.vertices.push_back(tri[0]);
+      vtc.vertices.push_back(tri[1]);
+      vtc.vertices.push_back(tri[2]);
+
+      polygons.push_back(vtc);
+    }
+
+    // TODO: push transformed mesh points to pcl_mesh cloud
+    pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloud {new pcl::PointCloud<pcl::PointXYZRGBA>};
+    cloud->width = mesh.points.size();
+    cloud->height = 1;
+    cloud->is_dense = false;
+
+    cloud->points.resize(cloud->width * cloud->height);
+
+    for (size_t i = 0; i < mesh.points.size(); ++i) {
+      auto pt = transform(trans, mesh.points[i]);
+      auto &cpt = cloud->points[i];
+      cpt.x = -pt.x;
+      cpt.y = -pt.y;
+      cpt.z = -pt.z;
+      cpt.r = 128;
+      cpt.g = 128;
+      cpt.b = 128;
+      cpt.a = 255;
+    }
+
+    return std::tie(cloud, polygons);
+  }
+
+  void fillVisualizerWithLock(pcl::visualization::PCLVisualizer &visualizer, const bool firstRun) override
+  {
+    const std::string &cloudname = "ContourFittingClassifier";
+    pcl::PointCloud<pcl::PointXYZRGBA>::Ptr outCloud;
+
+    outCloud = this->view_cloud;
+
+    if (firstRun)
+      visualizer.addPointCloud(outCloud, cloudname);
+    else {
+      visualizer.updatePointCloud(outCloud, cloudname);
+      visualizer.removeAllShapes();
+    }
+
+    int i = 0;
+    for (const auto &name : this->labels) {
+      std::string pcl_mesh_name = "_" + std::to_string(i);
+      pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloud;
+      std::vector<pcl::Vertices> polygons;
+      std::tie(cloud, polygons) = meshToPCLMesh(this->edge_models[name].mesh, this->affine_mesh_transforms[i]);
+
+      visualizer.removeShape(pcl_mesh_name);
+      assert(visualizer.addPolygonMesh<pcl::PointXYZRGBA>(cloud, polygons, pcl_mesh_name));
 
       ++i;
     }
@@ -890,10 +958,12 @@ private:
   cv::Mat image_rgb;
   cv::Mat displ = cv::Mat(480, 640, CV_8UC3);
 
+  pcl::PointCloud<pcl::PointXYZRGBA>::Ptr view_cloud {new pcl::PointCloud<pcl::PointXYZRGBA>};
+
   ::Camera silhouette_camera;
 };
 
-cv::Point2f transform(cv::Mat &M, const cv::Point2f &pt) {
+cv::Point2f transform(const cv::Mat &M, const cv::Point2f &pt) {
   cv::Mat vec(3, 1, CV_32FC1);
 
   vec.at<float>(0, 0) = pt.x;
@@ -905,7 +975,7 @@ cv::Point2f transform(cv::Mat &M, const cv::Point2f &pt) {
   return cv::Point2f(dst.at<float>(0, 0), dst.at<float>(1, 0));
 }
 
-cv::Point3f transform(cv::Mat &M, const cv::Point3f &pt) {
+cv::Point3f transform(const cv::Mat &M, const cv::Point3f &pt) {
   cv::Mat vec(4, 1, CV_32FC1);
 
   vec.at<float>(0, 0) = pt.x;
@@ -918,13 +988,13 @@ cv::Point3f transform(cv::Mat &M, const cv::Point3f &pt) {
   return cv::Point3f(dst.at<float>(0, 0), dst.at<float>(1, 0), dst.at<float>(2, 0));
 }
 
-cv::Vec3f transform(cv::Mat &M, const cv::Vec3f &vec) {
+cv::Vec3f transform(const cv::Mat &M, const cv::Vec3f &vec) {
   cv::Point3f pt(vec[0], vec[1], vec[2]);
 
   return transform(M, pt);
 }
 
-::Silhouettef transform(cv::Mat &M, const ::Silhouettef &sil) {
+::Silhouettef transform(const cv::Mat &M, const ::Silhouettef &sil) {
   Silhouettef result;
 
   for (const auto &pt : sil)
@@ -933,7 +1003,7 @@ cv::Vec3f transform(cv::Mat &M, const cv::Vec3f &vec) {
   return result;
 }
 
-::Silhouettef transform(cv::Mat &M, const ::Silhouette &sil) {
+::Silhouettef transform(const cv::Mat &M, const ::Silhouette &sil) {
   Silhouettef result;
 
   for (const auto &pt : sil) {
@@ -945,7 +1015,7 @@ cv::Vec3f transform(cv::Mat &M, const cv::Vec3f &vec) {
   return result;
 }
 
-std::vector<cv::Point3f> transform(cv::Mat &M, const std::vector<cv::Point3f> &points) {
+std::vector<cv::Point3f> transform(const cv::Mat &M, const std::vector<cv::Point3f> &points) {
   std::vector<cv::Point3f> result;
   result.reserve(points.size());
 
@@ -978,13 +1048,13 @@ std::vector<cv::Point3f> transform(cv::Mat &M, const std::vector<cv::Point3f> &p
   return result;
 }
 
-cv::Rect_<float> getBoundingRect(::Silhouettef &sil) {
+cv::Rect_<float> getBoundingRect(const ::Silhouettef &sil) {
   cv::Rect_<float> b_rect;
 
-  auto h_it = std::minmax_element(sil.begin(), sil.end(),
+  auto h_it = std::minmax_element(sil.cbegin(), sil.cend(),
     [](const cv::Point2f &a, const cv::Point2f &b) {
       return a.x < b.x;});
-  auto v_it = std::minmax_element(sil.begin(), sil.end(),
+  auto v_it = std::minmax_element(sil.cbegin(), sil.cend(),
     [](const cv::Point2f &a, const cv::Point2f &b) {
       return a.y < b.y;});
 
