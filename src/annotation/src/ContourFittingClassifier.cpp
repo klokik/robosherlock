@@ -442,7 +442,7 @@ public:
       this->histograms.push_back(hist);
 
       ranking.filter(norm_confidence_level);
-      this->pose_hypotheses.push_back(ranking.getTop(100));
+      this->pose_hypotheses.push_back(ranking.getTop(1));
 
       if (ranking.size() > 0) {
         auto top_hypothesis = ranking.getTop();
@@ -1302,14 +1302,15 @@ cv::Mat computeJacobian(::Pose &pose, ::Mesh &mesh, float h, ::Silhouettef &temp
 
 std::tuple<::Pose, double> fit2d3d(::Mesh &mesh, ::Pose &init_pose, ::Silhouettef &template_2d, ::Camera &camera) {
   ::Pose current_pose = init_pose;
-  float lambda = 1e-2f;
+  float lambda = 1e-1f;
+  size_t limit = 10;
 
   double cost = std::numeric_limits<double>::max();
 
   outInfo("Trace 1");
 
   bool done {false};
-  while (!done) {
+  while (!done && limit) {
     // outInfo("Trace 2");
     Silhouettef sil_2d = projectSurfacePoints(mesh, current_pose, camera);
 
@@ -1345,6 +1346,7 @@ std::tuple<::Pose, double> fit2d3d(::Mesh &mesh, ::Pose &init_pose, ::Silhouette
     done = (cost < 1e-3);
 
     outInfo("cost: " << cost);
+    --limit;
   }
 
   return std::tie(current_pose, cost);
