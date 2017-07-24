@@ -171,10 +171,10 @@
             <name>referenceShapes</name>
             <value>
                 <array>
-                    <string>/res/other/pokal.ply</string>
+                    <string>/res/other/pokal.ply|/res/other/pokal_edge.ply</string>
                     <!-- <string>/res/other/lodrat.ply</string> -->
-                    <string>/res/other/godis.ply</string>
-                    <string>/res/other/oanvand_blue.ply</string>
+                    <!-- <string>/res/other/godis.ply</string> -->
+                    <!-- <string>/res/other/oanvand_blue.ply</string> -->
                 </array>
             </value>
         </nameValuePair>

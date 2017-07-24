@@ -57,7 +57,7 @@
             <name>referenceShapes</name>
             <value>
                 <array>
-                    <string>/res/disc.ply</string>
+                    <string>/res/disc.ply|/res/disc.ply</string>
                 </array>
             </value>
         </nameValuePair>
