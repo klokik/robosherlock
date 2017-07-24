@@ -665,6 +665,11 @@ protected:
     enum class PLYSection : int { HEADER=0, VERTEX, FACE};
     std::map<PLYSection, int> counts;
 
+    auto minf = std::numeric_limits<float>::min();
+    auto maxf = std::numeric_limits<float>::max();
+    cv::Point3f min_pt(maxf, maxf, maxf);
+    cv::Point3f max_pt(minf, minf, minf);
+
     PLYSection cur_section = PLYSection::HEADER;
     for (std::string line; std::getline(ifs, line);) {
       if (cur_section == PLYSection::HEADER) {
@@ -685,6 +690,14 @@ protected:
           cv::Point3f pt;
           cv::Point3f nrm;
           iss >> pt.x >> pt.y >> pt.z >> nrm.x >> nrm.y >> nrm.z;
+
+          min_pt.x = std::min(pt.x, min_pt.x);
+          min_pt.y = std::min(pt.y, min_pt.y);
+          min_pt.z = std::min(pt.z, min_pt.z);
+
+          max_pt.x = std::max(pt.x, max_pt.x);
+          max_pt.y = std::max(pt.y, max_pt.y);
+          max_pt.z = std::max(pt.z, max_pt.z);
 
           points.push_back(pt);
           normals.push_back(nrm);
@@ -709,6 +722,10 @@ protected:
 
     assert(counts[PLYSection::VERTEX] == 0);
     assert(counts[PLYSection::FACE] == 0);
+
+    cv::Point3f offset = max_pt - min_pt;
+    for (auto &pt : points)
+      pt -= offset;
 
     return {points, normals, triangles};
   }
