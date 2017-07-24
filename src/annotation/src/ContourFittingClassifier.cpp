@@ -10,6 +10,8 @@
 #define PCL_SEGFAULT_WORKAROUND 1
 
 #include <pcl/point_types.h>
+#include <pcl/kdtree/kdtree_flann.h>
+
 
 #if !PCL_SEGFAULT_WORKAROUND
 #include <pcl/registration/icp.h>
@@ -39,6 +41,11 @@ struct Pose {
   cv::Vec3f trans;
 };
 
+struct Camera {
+  cv::Mat matrix = cv::Mat::eye(3, 3, CV_32FC1);
+  std::vector<float> ks;
+};
+
 using Silhouette = std::vector<cv::Point2i>;
 using Silhouettef = std::vector<cv::Point2f>;
 
@@ -51,6 +58,10 @@ std::vector<cv::Point3f> transform(const cv::Mat &M, const std::vector<cv::Point
 ::Silhouettef normalizeSilhouette(const ::Silhouettef &shape);
 cv::Rect_<float> getBoundingRect(const ::Silhouettef &sil);
 cv::Mat poseToAffine(const ::Pose &pose);
+::Pose operator+(const ::Pose &a, const Pose &b);
+::Pose operator*(const double a, const Pose &b);
+std::tuple<::Pose, double> fit2d3d(::Mesh &mesh, ::Pose &init_pose, ::Silhouettef &template_2d, ::Camera &camera);
+::Silhouettef getCannySilhouette(cv::Mat &grayscale, cv::Rect &input_roi);
 
 struct Footprint {
   cv::Mat img;
@@ -63,6 +74,7 @@ struct Footprint {
 class EdgeModel {
   public: std::string name;
   public: Mesh mesh;
+  public: Mesh edge_mesh;
 
   public: void addFootprint(cv::Mat &footprint, const Silhouettef &contour, const Pose &pose) {
     if (contour.size() > 0) {
@@ -207,12 +219,6 @@ class PoseRanking {
   private: std::set<::PoseHypothesis, LessProbable> hypotheses;
 };
 
-
-struct Camera {
-  cv::Mat matrix = cv::Mat::eye(3, 3, CV_32FC1);
-  std::vector<float> ks;
-};
-
 class ContourFittingClassifier : public DrawingAnnotator
 {
 public:
@@ -240,13 +246,20 @@ public:
       try {
         EdgeModel edge_model;
 
+        auto offset = fname->find('|');
+        assert(offset != std::string::npos);
+
+        std::string mesh_fname = fname->substr(0, offset);
+        std::string edge_fname = fname->substr(offset+1, fname->size());
+
         bool cached;
-        std::string cache_filename = this->cache_path + fname->substr(fname->rfind('/')) + ".txt";
+        std::string cache_filename = this->cache_path + mesh_fname.substr(mesh_fname.rfind('/')) + ".txt";
         outInfo("Cache name " << cache_filename);
 
-        auto training_mesh = readTrainingMesh(*fname);
+        auto training_mesh = readTrainingMesh(mesh_fname);
+        auto edge_mesh = readTrainingMesh(edge_fname);
 
-        if (!(cached = edge_model.loadFromFile(cache_filename)) || ignore_cache) {
+        if (ignore_cache || !(cached = edge_model.loadFromFile(cache_filename))) {
           edge_model = getSampledFootprints(
             training_mesh,
             silhouette_camera,
@@ -259,10 +272,11 @@ public:
           outInfo("File in cache: " + cache_filename);
 
         edge_model.mesh = training_mesh;
+        edge_model.edge_mesh = edge_mesh;
 
         outInfo("Cached: " << cached);
 
-        this->edge_models[*fname] = edge_model;
+        this->edge_models[mesh_fname] = edge_model;
 
         if (!cached || ignore_cache)
           edge_model.saveToFile(cache_filename);
@@ -293,6 +307,7 @@ public:
 
     cv::Mat cas_image_rgb;
     cv::Mat cas_image_depth;
+    cv::Mat image_grayscale;
 
     if (!cas.get(VIEW_DEPTH_IMAGE, cas_image_depth)) {
       outError("No depth image");
@@ -305,6 +320,7 @@ public:
     }
 
     cv::resize(cas_image_rgb, image_rgb, cas_image_depth.size());
+    cv::cvtColor(image_rgb, image_grayscale, CV_BGR2GRAY);
 
     if (!cas.get(VIEW_CLOUD, *view_cloud)) {
       outError("No view point cloud");
@@ -346,6 +362,11 @@ public:
 
       ImageSegmentation::Segment i_segment;
       rs::conversion::from(segment, i_segment);
+
+      ::Silhouettef surface_edges = getCannySilhouette(image_grayscale, i_segment.rect);
+      if (surface_edges.size() == 0)
+        continue;
+
       this->segments.push_back(i_segment);
 
       ::PoseRanking ranking;
@@ -363,7 +384,8 @@ public:
           ::PoseHypothesis hypothesis;
           hypothesis.model_name = kv.first;
 
-          cv::Mat pr_trans = procrustesTransform(it->contour, silhouette);
+          double pr_fitness_score = 0;
+          cv::Mat pr_trans = procrustesTransform(it->contour, silhouette, &pr_fitness_score);
 
           std::vector<cv::Point2f> points_2d;
 
@@ -389,6 +411,7 @@ public:
           std::tie(distance, confidence) = getChamferDistance(trans_mesh_fp.contour, silhouette, cas_image_depth.size(), dist_transform);
 
           hypothesis.probability = (1 / (distance + 0.01)) * confidence;
+          // hypothesis.probability = (1 / (pr_fitness_score + 0.01));
 
           #pragma omp critical
           ranking.addElement(hypothesis);
@@ -427,7 +450,25 @@ public:
 
         outInfo("Found " << ranking.size() << " probable poses");
         outInfo("\tProbably it is " << top_hypothesis.model_name << "; score: " << max_pr);
+
+        outInfo("Surface edges contains: " << surface_edges.size() << " points");
+        for (auto &hyp : this->pose_hypotheses.back()) {
+          ::Mesh &surface_edge_mesh = this->edge_models[hyp.model_name].edge_mesh;
+
+          ::Pose new_pose;
+          double cost = 0;
+
+          outInfo("Running 2d-3d ICP ... ");
+          std::tie(new_pose, cost) = ::fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera);
+          outInfo("\tdone: cost = " << cost);
+
+          hyp.pose = new_pose;
+          // assert(cost < 1 && cost >= 0);
+
+          break;
+        }
       }
+      break;
     }
 
     outInfo("took: " << clock.getTime() << " ms.");
@@ -440,7 +481,30 @@ protected:
     // disp = this->displ;
     // return;
     disp = image_rgb;
-    ImageSegmentation::drawSegments2D(disp, this->segments, this->labels, 1, 0.5);
+
+    cv::Mat gray;
+    cv::cvtColor(image_rgb, gray, CV_BGR2GRAY);
+
+    for (auto seg : this->segments) {
+      auto roi = seg.rect;
+
+      constexpr int margin = 5;
+      roi.x -= margin;
+      roi.y -= margin;
+      roi.width += 2*margin;
+      roi.height += 2*margin;
+
+      cv::Mat gray_roi = gray(roi);
+
+      // Compute optimal thresh value
+      cv::Mat not_used;
+      double otsu_thresh_val = cv::threshold(gray_roi, not_used, 0, 255, CV_THRESH_BINARY | CV_THRESH_OTSU);
+      cv::Canny(gray_roi, gray_roi, otsu_thresh_val/3, otsu_thresh_val);
+    }
+
+    cv::cvtColor(gray, disp, CV_GRAY2BGR);
+
+    // ImageSegmentation::drawSegments2D(disp, this->segments, this->labels, 1, 0.5);
 
     // return;
     // for (const auto &sil : this->fitted_silhouettes) {
@@ -879,7 +943,7 @@ protected:
     return std::make_pair(mean, std_dev);
   }
 
-  static cv::Mat procrustesTransform(const ::Silhouettef &sil, const ::Silhouettef &tmplt) {
+  static cv::Mat procrustesTransform(const ::Silhouettef &sil, const ::Silhouettef &tmplt, double *fitness_score = nullptr) {
     cv::Vec2f mean_s, mean_t;
     float deviation_s, deviation_t;
 
@@ -891,7 +955,11 @@ protected:
     auto nt = normalizeSilhouette(tmplt);
 
     cv::Mat icp_mat;
-    std::tie(icp_mat, std::ignore) = fitICP(ns, nt);
+    double fitness;
+    std::tie(icp_mat, fitness) = fitICP(ns, nt);
+
+    if (fitness_score)
+      *fitness_score = fitness;
 
     cv::Mat Ts_inv = (cv::Mat_<float>(3, 3) << 1, 0, -mean_s(0), 0, 1, -mean_s(1), 0 , 0, 1);
     cv::Mat Ss_inv = (cv::Mat_<float>(3, 3) << 1/deviation_s, 0, 0, 0, 1/deviation_s, 0, 0 , 0, 1);
@@ -960,7 +1028,7 @@ private:
   std::vector<cv::Mat> histograms;
 
   cv::Mat image_rgb;
-  cv::Mat displ = cv::Mat(480, 640, CV_8UC3);
+  cv::Mat distance_mat = cv::Mat(480, 640, CV_8UC3);
 
   pcl::PointCloud<pcl::PointXYZRGBA>::Ptr view_cloud {new pcl::PointCloud<pcl::PointXYZRGBA>};
 
@@ -1079,6 +1147,238 @@ cv::Mat poseToAffine(const ::Pose &pose) {
   affine_3d_transform.at<float>(2, 3) = pose.trans(2);
 
   return affine_3d_transform;
+}
+
+::Pose operator+(const ::Pose &a, const Pose &b) {
+  ::Pose result;
+
+  result.rot = a.rot + b.rot;
+  result.trans = a.trans + b.trans;
+
+  return result;
+}
+
+::Pose operator*(const double a, const Pose &b) {
+  ::Pose result;
+
+  result.rot = b.rot * a;
+  result.trans = b.trans * a;
+
+  return result;
+}
+
+::Silhouettef projectSurfacePoints(::Mesh &mesh, ::Pose &pose, ::Camera &camera) {
+  ::Silhouettef points_2d;
+  cv::projectPoints(mesh.points, pose.rot, pose.trans, camera.matrix, camera.ks, points_2d);
+
+  return points_2d;
+}
+
+pcl::KdTreeFLANN<pcl::PointXY> getKdTree(const ::Silhouettef &sil) {
+  pcl::PointCloud<pcl::PointXY>::Ptr input_cloud {new pcl::PointCloud<pcl::PointXY>};
+
+  input_cloud->width = sil.size();
+  input_cloud->height = 1;
+  input_cloud->is_dense = false;
+
+  input_cloud->points.resize(input_cloud->width * input_cloud->height);
+
+  for(size_t i = 0; i < input_cloud->size(); ++i) {
+    input_cloud->points[i] = {sil[i].x, sil[i].y};
+  }
+
+  pcl::KdTreeFLANN<pcl::PointXY> kdtree;
+
+  kdtree.setInputCloud(input_cloud);
+
+  return kdtree;
+}
+
+cv::Point2f getNearestPoint(pcl::KdTree<pcl::PointXY> &template_kdtree, const cv::Point2f &pt) {
+  pcl::PointXY search_point = {pt.x, pt.y};
+
+  std::vector<int> indices;
+  std::vector<float> l2_sqr_distances;
+
+  assert(template_kdtree.nearestKSearch(search_point, 1, indices, l2_sqr_distances) == 1);
+
+  auto cloud = template_kdtree.getInputCloud();
+  auto out_pt = cloud->points[indices.front()];
+
+  return cv::Point2f(out_pt.x, out_pt.y);
+}
+
+std::tuple<cv::Mat, cv::Mat> computeResidualsAndWeights(const ::Silhouettef &data, const ::Silhouettef &template_2d) {
+  cv::Mat residuals(data.size(), 1, CV_32FC1);
+  cv::Mat weights(data.size(), 1, CV_32FC1);
+
+  auto template_kdtree = getKdTree(template_2d);
+
+  int i = 0;
+  for (const auto &pt : data) {
+    auto template_pt = getNearestPoint(template_kdtree, pt);
+
+    float distance = cv::norm(template_pt - pt);
+    residuals.at<float>(i, 0) = distance;
+    weights.at<float>(i, 0) = (distance <= 10); // or how do we check if point matches???
+
+    i++;
+  }
+
+  return std::tie(residuals, weights);
+}
+
+template<class T, class Compare>
+const T &clamp(const T &v, const T &lo, const T &hi, Compare comp) {
+    return assert(!comp(hi, lo)),
+        comp(v, lo) ? lo : comp(hi, v) ? hi : v;
+}
+
+template<class T>
+const T &clamp(const T &v, const T &lo, const T &hi) {
+    return clamp(v, lo, hi, std::less<T>());
+}
+
+cv::Mat computeJacobian(::Pose &pose, ::Mesh &mesh, float h, ::Silhouettef &template_2d, cv::Mat &weights, ::Camera &camera) {
+  size_t dof = 6;
+
+  std::vector<::Pose> pose_h_plus;
+  std::vector<::Pose> pose_h_minus;
+
+  Pose tmp = pose + Pose{{h, 0, 0}, {0, 0, 0}};
+  pose_h_plus.push_back(tmp);
+  tmp = pose + Pose{{-h, 0, 0}, {0, 0, 0}};
+  pose_h_minus.push_back(tmp);
+
+  tmp = pose + Pose{{0, h, 0}, {0, 0, 0}};
+  pose_h_plus.push_back(tmp);
+  tmp = pose + Pose{{0, -h, 0}, {0, 0, 0}};
+  pose_h_minus.push_back(tmp);
+
+  tmp = pose + Pose{{0, 0, h}, {0, 0, 0}};
+  pose_h_plus.push_back(tmp);
+  tmp = pose + Pose{{0, 0, -h}, {0, 0, 0}};
+  pose_h_minus.push_back(tmp);
+
+  tmp = pose + Pose{{0, 0, 0}, {h, 0, 0}};
+  pose_h_plus.push_back(tmp);
+  tmp = pose + Pose{{0, 0, 0}, {-h, 0, 0}};
+  pose_h_minus.push_back(tmp);
+
+  tmp = pose + Pose{{0, 0, 0}, {0, h, 0}};
+  pose_h_plus.push_back(tmp);
+  tmp = pose + Pose{{0, 0, 0}, {0, -h, 0}};
+  pose_h_minus.push_back(tmp);
+
+  tmp = pose + Pose{{0, 0, 0}, {0, 0, h}};
+  pose_h_plus.push_back(tmp);
+  tmp = pose + Pose{{0, 0, 0}, {0, 0, -h}};
+  pose_h_minus.push_back(tmp);
+
+  Silhouettef d_ref = projectSurfacePoints(mesh, pose, camera);
+
+  auto template_kd = getKdTree(template_2d);
+
+  cv::Mat jacobian(mesh.points.size(), dof, CV_32FC1);
+  for (size_t j = 0; j < dof; ++j) {
+    Silhouettef d_plus = projectSurfacePoints(mesh, pose_h_plus[j], camera);
+    Silhouettef d_minus = projectSurfacePoints(mesh, pose_h_minus[j], camera);
+
+    for (size_t i = 0; i < d_plus.size(); ++i) {
+      auto d_i_plus = getNearestPoint(template_kd, d_plus[i]);
+      auto d_i_minus = getNearestPoint(template_kd, d_minus[i]);
+
+      float dei_daj = weights.at<float>(i, 0) * (cv::norm(d_i_plus - d_ref[i]) - cv::norm(d_i_minus - d_ref[i])) / (2 * h);
+
+      // assert(dei_daj < 1000);
+      // assert(dei_daj > -1000);
+
+      jacobian.at<float>(i, j) = clamp(dei_daj, -1000.f, 1000.f);
+    }
+  }
+
+  return jacobian;
+}
+
+std::tuple<::Pose, double> fit2d3d(::Mesh &mesh, ::Pose &init_pose, ::Silhouettef &template_2d, ::Camera &camera) {
+  ::Pose current_pose = init_pose;
+  float lambda = 1e-2f;
+
+  double cost = std::numeric_limits<double>::max();
+
+  outInfo("Trace 1");
+
+  bool done {false};
+  while (!done) {
+    // outInfo("Trace 2");
+    Silhouettef sil_2d = projectSurfacePoints(mesh, current_pose, camera);
+
+    // outInfo("Trace 3");
+    cv::Mat residuals;
+    cv::Mat weights;
+    std::tie(residuals, weights) = computeResidualsAndWeights(sil_2d, template_2d);
+
+    // outInfo("Trace 4");
+    auto h = 1e-3;
+    cv::Mat jacobian = computeJacobian(current_pose, mesh, h, template_2d, weights, camera);
+    if (cv::countNonZero(jacobian) == 0) {
+      outInfo("Already at best approximation, or `h` is too small");
+      cost = cv::norm(residuals, cv::NORM_L2);
+      break;
+    }
+    // outInfo("Jacobian: " << jacobian);
+
+    // outInfo("Trace 5");
+    cv::Mat pinv_jacobian = jacobian.inv(cv::DECOMP_SVD);
+    cv::Mat delta_pose_mat = pinv_jacobian * residuals;
+
+    // outInfo("Trace 6");
+    ::Pose delta_pose;
+    delta_pose.rot = cv::Vec3f(delta_pose_mat.at<float>(0, 0), delta_pose_mat.at<float>(1, 0), delta_pose_mat.at<float>(2, 0));
+    delta_pose.trans = cv::Vec3f(delta_pose_mat.at<float>(3, 0), delta_pose_mat.at<float>(4, 0), delta_pose_mat.at<float>(5, 0));
+
+    // outInfo("Trace 7");
+    current_pose = current_pose + lambda*delta_pose;
+
+    // outInfo("Trace 8");
+    cost = cv::norm(residuals, cv::NORM_L2);
+    done = (cost < 1e-3);
+
+    outInfo("cost: " << cost);
+  }
+
+  return std::tie(current_pose, cost);
+}
+
+::Silhouettef getCannySilhouette(cv::Mat &grayscale, cv::Rect &input_roi) {
+  auto roi = input_roi;
+
+  constexpr int margin = 5;
+  roi.x -= margin;
+  roi.y -= margin;
+  roi.width += 2*margin;
+  roi.height += 2*margin;
+
+  cv::Mat gray_roi = grayscale(roi);
+
+  // Compute optimal thresh value
+  cv::Mat not_used;
+  double otsu_thresh_val = cv::threshold(gray_roi, not_used, 0, 255, CV_THRESH_BINARY | CV_THRESH_OTSU);
+  cv::Canny(gray_roi, gray_roi, otsu_thresh_val/3, otsu_thresh_val);
+
+  ::Silhouettef result;
+
+  outInfo("non Zero " << cv::countNonZero(gray_roi));
+
+  for(int row = 0; row < gray_roi.rows; ++row) {
+    uint8_t *ptr = gray_roi.ptr(row);
+    for(int col = 0; col < gray_roi.cols; ++col, ++ptr) {
+      if (*ptr != 0)
+        result.push_back(cv::Point2f(row + roi.x, col + roi.y));
+    }
+  }
+
+  return result;
 }
 
 // This macro exports an entry point that is used to create the annotator.
