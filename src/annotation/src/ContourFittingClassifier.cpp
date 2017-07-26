@@ -55,6 +55,7 @@ cv::Vec3f transform(const cv::Mat &M, const cv::Vec3f &vec);
 ::Silhouettef transform(const cv::Mat &M, const ::Silhouettef &sil);
 ::Silhouettef transform(const cv::Mat &M, const ::Silhouette &sil);
 std::vector<cv::Point3f> transform(const cv::Mat &M, const std::vector<cv::Point3f> &points);
+cv::Vec3f transform(const ::Pose &pose, const cv::Vec3f &vec);
 ::Silhouettef normalizeSilhouette(const ::Silhouettef &shape);
 cv::Rect_<float> getBoundingRect(const ::Silhouettef &sil);
 cv::Mat poseToAffine(const ::Pose &pose);
@@ -331,6 +332,30 @@ public:
     std::vector<rs::TransparentSegment> t_segments;
     scene.identifiables.filter(t_segments);
 
+    std::vector<rs::Plane> planes;
+    scene.annotations.filter(planes);
+
+    if(planes.empty())
+      return UIMA_ERR_ANNOTATOR_MISSING_INFO;
+
+    rs::Plane &plane = planes[0];
+    std::vector<float> model = plane.model();
+
+    if(model.empty() || model.size() != 4) {
+      outError("No plane found!");
+      return UIMA_ERR_NONE;
+    }
+
+/*    sensor_msgs::CameraInfo camInfo;
+    cas.get(VIEW_CAMERA_INFO, camInfo);
+    readCameraInfo(camInfo);*/
+
+    cv::Vec3f plane_normal;
+    plane_normal[0] = model[0];
+    plane_normal[1] = model[1];
+    plane_normal[2] = model[2];
+    double plane_distance = model[3];
+
     outInfo("Found " << t_segments.size() << " transparent segments");
 
     // Camera
@@ -462,13 +487,15 @@ public:
           std::tie(new_pose, cost) = ::fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera);
           outInfo("\tdone: cost = " << cost);
 
-          hyp.pose = new_pose;
+          // hyp.pose = new_pose;
           // assert(cost < 1 && cost >= 0);
 
-          break;
+          hyp.pose = alignObjectsPoseWithPlane(hyp.pose, plane_normal, plane_distance);
+
+          // break;
         }
       }
-      break;
+      // break;
     }
 
     outInfo("took: " << clock.getTime() << " ms.");
@@ -521,7 +548,7 @@ protected:
         continue;
 
       Camera cam;
-      drawMesh(disp, cam, this->edge_models[this->labels[i]].mesh, hyp.pose);
+      drawMesh(disp, cam, this->edge_models[this->labels[i]].edge_mesh, hyp.pose);
 
       auto &seg_center = segments[i].center;
       cv::Rect hist_dst_rect(cv::Point(seg_center.x, seg_center.y + 5 + segments[i].rect.height/2), histograms[i].size());
@@ -723,9 +750,9 @@ protected:
     assert(counts[PLYSection::VERTEX] == 0);
     assert(counts[PLYSection::FACE] == 0);
 
-    cv::Point3f offset = max_pt - min_pt;
-    for (auto &pt : points)
-      pt -= offset;
+    // cv::Point3f offset = max_pt - min_pt;
+    // for (auto &pt : points)
+    //   pt -= offset;
 
     return {points, normals, triangles};
   }
@@ -1027,6 +1054,51 @@ protected:
     return std::make_pair(distance, confidence);
   }
 
+  // Assume that object's default orientation is bottom down, with origin point at zero;
+  // returns a new pose for the object
+  ::Pose alignObjectsPoseWithPlane(::Pose initial_pose, cv::Vec3f support_plane_normal, const float support_plane_distance) {
+    auto spd = support_plane_distance;
+
+    // find anchor point
+    cv::Vec3f objects_anchor_point_local(0, 0, 0);
+    auto objects_anchor_point_camspace = transform(initial_pose, objects_anchor_point_local);
+
+    // find anchor point offset
+    auto lambda = -spd + support_plane_normal.ddot(objects_anchor_point_camspace);
+    auto anchor_offset = -support_plane_normal*lambda;
+
+    // find axes rotation transformation to align object's up to plane normal
+    cv::Vec3f objects_up_local(0, 1, 0);
+    ::Pose object_to_camera_rotation {initial_pose.rot, cv::Vec3f(0, 0, 0)};
+    auto objects_up_camspace = transform(object_to_camera_rotation, objects_up_local);
+
+    double phi = std::acos(support_plane_normal.ddot(objects_up_camspace));
+    outInfo("Phi: " << phi);
+    outInfo("camsp_up:" << objects_up_camspace);
+    outInfo("norm:" << support_plane_normal);
+    outInfo("lambda:" << lambda);
+    outInfo("Anchor offset:" << anchor_offset);
+    // phi = std::min(phi, M_PI - phi);
+
+    cv::Vec3f up_to_n_rot_axis = objects_up_camspace.cross(support_plane_normal);
+    cv::Vec3f rodrigues_up_to_n = up_to_n_rot_axis * (phi / cv::norm(up_to_n_rot_axis));
+
+    // combine initial transformation and plane aligning
+    cv::Mat up_to_n_rotation;
+    cv::Rodrigues(rodrigues_up_to_n, up_to_n_rotation);
+
+    ::Pose aligned_to_plane_objects_pose;
+    aligned_to_plane_objects_pose.trans = initial_pose.trans + anchor_offset;
+
+    cv::Mat initial_rotation;
+    cv::Rodrigues(initial_pose.rot, initial_rotation);
+    cv::Mat final_rotation = up_to_n_rotation * initial_rotation;
+
+    cv::Rodrigues(final_rotation, aligned_to_plane_objects_pose.rot);
+
+    return aligned_to_plane_objects_pose;
+  }
+
 private:
   std::string cache_path{"/tmp"};
   int rotation_axis_samples{10};
@@ -1081,6 +1153,12 @@ cv::Vec3f transform(const cv::Mat &M, const cv::Vec3f &vec) {
   cv::Point3f pt(vec[0], vec[1], vec[2]);
 
   return transform(M, pt);
+}
+
+cv::Vec3f transform(const ::Pose &pose, const cv::Vec3f &vec) {
+  cv::Mat M = poseToAffine(pose);
+
+  return transform(M, vec);
 }
 
 ::Silhouettef transform(const cv::Mat &M, const ::Silhouettef &sil) {
