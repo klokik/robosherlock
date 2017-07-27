@@ -499,7 +499,7 @@ public:
           hyp.pose = new_pose;
           // assert(cost < 1 && cost >= 0);
 
-          // hyp.pose = alignObjectsPoseWithPlane(hyp.pose, plane_normal, plane_distance);
+          hyp.pose = alignObjectsPoseWithPlane(hyp.pose, plane_normal, plane_distance);
 
           // outInfo("Running 2d-3d ICP2 ... ");
           // std::tie(new_pose, cost) = ::fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera);
@@ -508,7 +508,7 @@ public:
           // hyp.pose = new_pose;
         }
       }
-      break;
+      // break;
     }
 
     outInfo("took: " << clock.getTime() << " ms.");
@@ -552,16 +552,20 @@ protected:
     //     cv::circle(disp, pt, 1, cv::Scalar(255, 0, 255), -1);
     // }
 
+    cv::Mat transpR = cv::Mat::zeros(disp.size(), CV_8UC3);
+    cv::Mat transpB = cv::Mat::zeros(disp.size(), CV_8UC3);
     for (const auto &sil : this->surface_edges) {
       for (auto &pt : sil)
-        cv::circle(disp, pt, 1, cv::Scalar(255, 0, 255), -1);
+        cv::circle(transpR, pt, 1, cv::Scalar(0, 0, 255), -1);
     }
 
     for (const auto &sil : this->surface_edges_blue) {
       for (auto &pt : sil)
-        cv::circle(disp, pt, 1, cv::Scalar(255, 0, 0), -1);
+        cv::circle(transpB, pt, 1, cv::Scalar(255, 0, 0), -1);
     }
-return;
+
+    disp += transpR + transpB;
+
     for (size_t i = 0; i < this->labels.size(); ++i) {
       outInfo("draw");
       ::PoseHypothesis hyp;
@@ -570,9 +574,9 @@ return;
       else
         continue;
 
-      Camera cam;
-      drawMesh(disp, cam, this->edge_models[this->labels[i]].edge_mesh, hyp.pose);
-continue;
+      // Camera cam;
+      // drawMesh(disp, cam, this->edge_models[this->labels[i]].edge_mesh, hyp.pose);
+// continue;
       auto &seg_center = segments[i].center;
       cv::Rect hist_dst_rect(cv::Point(seg_center.x, seg_center.y + 5 + segments[i].rect.height/2), histograms[i].size());
       hist_dst_rect = hist_dst_rect & cv::Rect(cv::Point(), disp.size());
@@ -1125,13 +1129,13 @@ continue;
   std::tuple<::Pose, double> fit2d3d(::Mesh &mesh, ::Pose &init_pose, ::Silhouettef &template_2d, ::Camera &camera) {
     ::Pose current_pose = init_pose;
     float lambda = 10;
-    size_t limit = 10;
+    size_t limit = 1;
 
     double cost = std::numeric_limits<double>::max();
 
     outInfo("Trace 1");
 
-    this->surface_edges_blue.push_back(projectSurfacePoints(mesh, current_pose, camera));
+    // this->surface_edges_blue.push_back(projectSurfacePoints(mesh, current_pose, camera));
 
     bool done {false};
     while (!done && limit) {
@@ -1139,7 +1143,7 @@ continue;
       Silhouettef sil_2d = projectSurfacePoints(mesh, current_pose, camera);
 
       if (limit == 1)
-        this->surface_edges.push_back(sil_2d);
+        this->surface_edges_blue.push_back(sil_2d);
 
       // outInfo("Trace 3");
       cv::Mat residuals;
@@ -1551,7 +1555,7 @@ cv::Mat computeGradient(::Pose &pose, ::Mesh &mesh, double h, ::Silhouettef &tem
     uint8_t *ptr = gray_roi.ptr(row);
     for(int col = 0; col < gray_roi.cols; ++col, ++ptr) {
       if (*ptr != 0)
-        result.push_back(cv::Point2f(col + roi.x-20, row + roi.y));
+        result.push_back(cv::Point2f(col + roi.x, row + roi.y));
     }
   }
 
