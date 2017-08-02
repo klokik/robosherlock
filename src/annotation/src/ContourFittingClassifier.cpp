@@ -308,6 +308,9 @@ public:
 
   TyErrorId processWithLock(CAS &tcas, ResultSpecification const &res_spec) override
   {
+    // if (!first)
+      // return UIMA_ERR_NONE;
+
     outInfo("process start");
     rs::StopWatch clock;
     rs::SceneCas cas(tcas);
@@ -400,6 +403,12 @@ public:
       if (surface_edges.size() == 0)
         continue;
 
+      // save surface edges to file
+      // std::ofstream ofs("/tmp/edges.txt");
+      // ofs << surface_edges.size() << std::endl;
+      // for (auto &pt : surface_edges)
+      //   ofs << pt.x << " " << pt.y << " " << std::endl;
+
       this->surface_edges.push_back(surface_edges);
       this->segments.push_back(i_segment);
 
@@ -491,26 +500,32 @@ public:
 
           ::Pose new_pose;
           double cost = 0;
+          cv::Mat jacobian;
+
+          // ofs << hyp.pose.rot(0) << " " << hyp.pose.rot(1) << " " << hyp.pose.rot(2) << " "
+          //     << hyp.pose.trans(0) << " " << hyp.pose.trans(1) << " " << hyp.pose.trans(2) << std::endl;
 
           outInfo("Running 2d-3d ICP ... ");
-          std::tie(new_pose, cost) = fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera);
+          std::tie(new_pose, cost, jacobian) = fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera);
+          outInfo("\tdone: cost = " << cost);
+          assert(cost < 1 && cost >= 0);
+
+          hyp.pose = new_pose;
+
+          hyp.pose = alignObjectsPoseWithPlane(hyp.pose, plane_normal, plane_distance, jacobian);
+
+          outInfo("Running 2d-3d ICP2 ... ");
+          std::tie(new_pose, cost, std::ignore) = fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera);
           outInfo("\tdone: cost = " << cost);
 
           hyp.pose = new_pose;
-          // assert(cost < 1 && cost >= 0);
-
-          hyp.pose = alignObjectsPoseWithPlane(hyp.pose, plane_normal, plane_distance);
-
-          // outInfo("Running 2d-3d ICP2 ... ");
-          // std::tie(new_pose, cost) = ::fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera);
-          // outInfo("\tdone: cost = " << cost);
-
-          // hyp.pose = new_pose;
         }
       }
+      // ofs.close();
       // break;
     }
 
+    first = false;
     outInfo("took: " << clock.getTime() << " ms.");
     return UIMA_ERR_NONE;
   }
@@ -520,7 +535,7 @@ protected:
   void drawImageWithLock(cv::Mat &disp) override {
     // disp = this->displ;
     // return;
-    disp = image_rgb;
+    image_rgb.copyTo(disp);
 
     cv::Mat gray;
     cv::cvtColor(image_rgb, gray, CV_BGR2GRAY);
@@ -563,6 +578,9 @@ protected:
       for (auto &pt : sil)
         cv::circle(transpB, pt, 1, cv::Scalar(255, 0, 0), -1);
     }
+/*    auto &sil = this->surface_edges_blue[counter++ % this->surface_edges_blue.size()];
+    for (auto &pt : sil)
+      cv::circle(transpB, pt, 1, cv::Scalar(255, 0, 0), -1);*/
 
     disp += transpR + transpB;
 
@@ -574,8 +592,8 @@ protected:
       else
         continue;
 
-      // Camera cam;
-      // drawMesh(disp, cam, this->edge_models[this->labels[i]].edge_mesh, hyp.pose);
+      Camera cam;
+      drawMesh(disp, cam, this->edge_models[this->labels[i]].edge_mesh, hyp.pose);
 // continue;
       auto &seg_center = segments[i].center;
       cv::Rect hist_dst_rect(cv::Point(seg_center.x, seg_center.y + 5 + segments[i].rect.height/2), histograms[i].size());
@@ -1083,7 +1101,7 @@ protected:
 
   // Assume that object's default orientation is bottom down, with origin point at zero;
   // returns a new pose for the object
-  ::Pose alignObjectsPoseWithPlane(::Pose initial_pose, cv::Vec3f support_plane_normal, const float support_plane_distance) {
+  ::Pose alignObjectsPoseWithPlane(::Pose initial_pose, cv::Vec3f support_plane_normal, const float support_plane_distance, cv::Mat &jacobian) {
     auto spd = support_plane_distance;
 
     // find anchor point
@@ -1105,13 +1123,13 @@ protected:
     outInfo("norm:" << support_plane_normal);
     outInfo("lambda:" << lambda);
     outInfo("Anchor offset:" << anchor_offset);
-    // phi = std::min(phi, M_PI - phi);
+    phi = std::min(phi, M_PI - phi);
 
     cv::Vec3f up_to_n_rot_axis = objects_up_camspace.cross(support_plane_normal);
     cv::Vec3f rodrigues_up_to_n = up_to_n_rot_axis * (phi / cv::norm(up_to_n_rot_axis));
 
     // combine initial transformation and plane aligning
-    cv::Mat up_to_n_rotation;
+/*    cv::Mat up_to_n_rotation;
     cv::Rodrigues(rodrigues_up_to_n, up_to_n_rotation);
 
     ::Pose aligned_to_plane_objects_pose;
@@ -1121,88 +1139,126 @@ protected:
     cv::Rodrigues(initial_pose.rot, initial_rotation);
     cv::Mat final_rotation = up_to_n_rotation * initial_rotation;
 
-    cv::Rodrigues(final_rotation, aligned_to_plane_objects_pose.rot);
+    cv::Rodrigues(final_rotation, aligned_to_plane_objects_pose.rot);*/
 
-    return aligned_to_plane_objects_pose;
+    cv::Mat E = (cv::Mat_<double>(4, 6) <<
+      0, 0, 0, support_plane_normal(0), support_plane_normal(1), support_plane_normal(2),
+      0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0);
+
+    cv::Mat Et = E.t();
+
+    cv::Mat d = (cv::Mat_<double>(4, 1) <<
+      cv::norm(anchor_offset),
+      rodrigues_up_to_n(0),
+      rodrigues_up_to_n(1),
+      rodrigues_up_to_n(2));
+
+    cv::Mat Q = jacobian.t() * jacobian;
+
+    cv::Mat A = cv::Mat::eye(10, 10, CV_64FC1);
+    Q.copyTo(A(cv::Rect(0, 0, 6, 6)));
+    E.copyTo(A(cv::Rect(0, 6, E.cols, E.rows)));
+    Et.copyTo(A(cv::Rect(6, 0, Et.cols, Et.rows)));
+
+    cv::Mat b = cv::Mat::zeros(10, 1, CV_64FC1);
+    d.copyTo(b(cv::Rect(0, 6, 1, 4)));
+
+    cv::Mat x;
+    cv::solve(A, b, x, cv::DECOMP_SVD);
+
+    outInfo("Support plane pose delta: " << x.t());
+
+    ::Pose align_to_plane_objects_pose {
+      {x.at<double>(0), x.at<double>(1), x.at<double>(2)},
+      {x.at<double>(3), x.at<double>(4), x.at<double>(5)}};
+
+    return initial_pose + align_to_plane_objects_pose;
   }
 
-  std::tuple<::Pose, double> fit2d3d(::Mesh &mesh, ::Pose &init_pose, ::Silhouettef &template_2d, ::Camera &camera) {
+  std::tuple<::Pose, double, cv::Mat> fit2d3d(::Mesh &mesh, ::Pose &init_pose, ::Silhouettef &template_2d, ::Camera &camera) {
     ::Pose current_pose = init_pose;
-    float lambda = 10;
-    size_t limit = 1;
+    float learning_rate = 1e-4;
+    size_t limit_iterations = 200;
+    double limit_epsilon = 1e-5;
+    size_t stall_counter = 0;
+    double h = 1e-3;
 
-    double cost = std::numeric_limits<double>::max();
-
-    outInfo("Trace 1");
-
-    // this->surface_edges_blue.push_back(projectSurfacePoints(mesh, current_pose, camera));
+    double last_error = 0;
+    cv::Mat jacobian;
 
     bool done {false};
-    while (!done && limit) {
-      // outInfo("Trace 2");
+    while (!done && limit_iterations) {
+
       Silhouettef sil_2d = projectSurfacePoints(mesh, current_pose, camera);
 
-      if (limit == 1)
+      if (limit_iterations == 1)
         this->surface_edges_blue.push_back(sil_2d);
 
-      // outInfo("Trace 3");
       cv::Mat residuals;
       cv::Mat weights;
       std::tie(residuals, weights) = computeResidualsAndWeights(sil_2d, template_2d);
 
-      // outInfo("Trace 8");
-      cost = cv::norm(residuals, cv::NORM_L2) / cv::sum(weights)[0];
-      outInfo("cost: " << cost << " (" << cv::sum(weights)[0] << "/" << weights.size() << ")") ;
-      done = (cost < 0.03);
+      double ref_error = cv::norm(residuals, cv::NORM_L2) / cv::sum(weights)[0];
+      outInfo("ref_error: " << ref_error << " (" << cv::sum(weights)[0] << "/" << weights.size() << ")") ;
 
-      // outInfo("Trace 4");
-      auto h = 1e-3;
-      cv::Mat jacobian = computeJacobian(current_pose, mesh, h, template_2d, weights, camera);
+      if (std::abs(last_error - ref_error) < limit_epsilon) {
+        if (stall_counter == 5) {
+          outInfo("Done");
+          done = true;
+          if (limit_iterations != 1)
+            this->surface_edges_blue.push_back(sil_2d);
+        }
+        stall_counter++;
+      }
+      else
+        stall_counter = 0;
+
+      last_error = ref_error;
+
+      jacobian = computeJacobian(current_pose, mesh, h, template_2d, weights, camera);
       if (cv::countNonZero(jacobian) == 0 || cv::sum(weights)[0] == 0) {
         outInfo("Already at best approximation, or `h` is too small");
-        cost = cv::norm(residuals, cv::NORM_L2);
+        ref_error = cv::norm(residuals, cv::NORM_L2);
         break;
       }
       // outInfo("Jacobian: " << jacobian);
 
-      // outInfo("Trace 5");
-      cv::Mat pinv_jacobian = jacobian.inv(cv::DECOMP_SVD);
-      cv::Mat delta_pose_mat = pinv_jacobian * residuals;
+      // cv::Mat pinv_jacobian = jacobian.inv(cv::DECOMP_SVD);
+      cv::Mat delta_pose_mat; //= pinv_jacobian * residuals;
+      cv::solve(jacobian, residuals, delta_pose_mat, cv::DECOMP_SVD);
 
-      double max_val = cv::norm(pinv_jacobian, cv::NORM_INF);
-      outInfo("pinvJacobian norm: " << max_val);
+      // double max_val = cv::norm(pinv_jacobian, cv::NORM_INF);
+      // outInfo("pinvJacobian norm: " << max_val);
       outInfo("delta_pose:" << delta_pose_mat);
 
-      // outInfo("Trace 6");
       ::Pose delta_pose;
-      delta_pose.rot = cv::Vec3f(0, 0, 0);//cv::Vec3f(delta_pose_mat.at<float>(0, 0), delta_pose_mat.at<float>(1, 0), delta_pose_mat.at<float>(2, 0));
-      delta_pose.trans = cv::Vec3f(delta_pose_mat.at<float>(3, 0), delta_pose_mat.at<float>(4, 0), delta_pose_mat.at<float>(5, 0));
+      delta_pose.rot = cv::Vec3f(delta_pose_mat.at<float>(0), delta_pose_mat.at<float>(1), delta_pose_mat.at<float>(2));
+      delta_pose.trans = cv::Vec3f(delta_pose_mat.at<float>(3), delta_pose_mat.at<float>(4), delta_pose_mat.at<float>(5));
 
       // compute pose gradient at pose point
-  /*    cv::Mat pose_gradient = computeGradient(current_pose, mesh, h, template_2d, weights, camera);
+/*      cv::Mat pose_gradient = computeGradient(current_pose, mesh, h, template_2d, weights, camera);
+      cv::Mat delta_pose_mat = pose_gradient;
       outInfo("Gradient : " << pose_gradient);
       ::Pose delta_pose {{
-        - pose_gradient.at<double>(0, 0) * cost,
-        - pose_gradient.at<double>(1, 0) * cost,
-        - pose_gradient.at<double>(2, 0) * cost}, {
-        - pose_gradient.at<double>(3, 0) * cost,
-        - pose_gradient.at<double>(4, 0) * cost,
-        - pose_gradient.at<double>(5, 0) * cost}
+        pose_gradient.at<double>(0, 0) * cost,
+        pose_gradient.at<double>(1, 0) * cost,
+        pose_gradient.at<double>(2, 0) * cost}, {
+        pose_gradient.at<double>(3, 0) * cost,
+        pose_gradient.at<double>(4, 0) * cost,
+        pose_gradient.at<double>(5, 0) * cost}
       };*/
 
-      // outInfo("Trace 7");
-      current_pose = current_pose + (-1 * lambda) * delta_pose;
+      current_pose = current_pose + (-1 * learning_rate) * delta_pose;
 
       double step_size = cv::norm(delta_pose_mat);
       outInfo("\tStep: " << step_size);
 
-      // if (step_size < 0.03)
-        // done = true;
-
-      --limit;
+      --limit_iterations;
     }
 
-    return std::tie(current_pose, cost);
+    return std::tie(current_pose, last_error, jacobian);
   }
 
 private:
@@ -1223,6 +1279,8 @@ private:
   std::vector<Silhouettef> surface_edges_blue;
   std::vector<std::string> labels;
   std::vector<cv::Mat> histograms;
+  bool first {true};
+  size_t counter {0};
 
   cv::Mat image_rgb;
   cv::Mat distance_mat = cv::Mat(480, 640, CV_8UC3);
@@ -1423,7 +1481,7 @@ std::tuple<cv::Mat, cv::Mat> computeResidualsAndWeights(const ::Silhouettef &dat
 
     float distance = cv::norm(template_pt - pt);
     residuals.at<float>(i, 0) = distance;
-    weights.at<float>(i, 0) = (distance <= 10); // or how do we check if point matches???
+    weights.at<float>(i, 0) = (distance <= 5); // or how do we check if point matches???
 
     i++;
   }
@@ -1468,7 +1526,7 @@ cv::Mat computeJacobian(::Pose &pose, ::Mesh &mesh, float h, ::Silhouettef &temp
 
   auto template_kd = getKdTree(template_2d);
 
-  double weights_count = cv::sum(weights)[0];
+  // double weights_count = cv::sum(weights)[0];
 
   cv::Mat jacobian(mesh.points.size(), dof, CV_32FC1);
   for (size_t j = 0; j < dof; ++j) {
@@ -1478,6 +1536,7 @@ cv::Mat computeJacobian(::Pose &pose, ::Mesh &mesh, float h, ::Silhouettef &temp
     Silhouettef d_plus  = projectSurfacePoints(mesh, pose_h_plus, camera);
     Silhouettef d_minus = projectSurfacePoints(mesh, pose_h_minus, camera);
 
+    #pragma omp parallel for
     for (size_t i = 0; i < d_plus.size(); ++i) {
       auto d_i_plus = getNearestPoint(template_kd, d_plus[i]);
       auto d_i_minus = getNearestPoint(template_kd, d_minus[i]);
