@@ -28,12 +28,12 @@ public:
     cameraInfo.roi.x_offset = 0;
     cameraInfo.roi.y_offset = 0;
 
-    cameraInfo.K[0] = 525;
+    cameraInfo.K[0] = 570.3422241210938;
     cameraInfo.K[1] = 0;
-    cameraInfo.K[2] = 319.75;
+    cameraInfo.K[2] = 319.5;
     cameraInfo.K[3] = 0;
-    cameraInfo.K[4] = 525;
-    cameraInfo.K[5] = 239.75;
+    cameraInfo.K[4] = 570.3422241210938;
+    cameraInfo.K[5] = 239.5;
     cameraInfo.K[6] = 0;
     cameraInfo.K[7] = 0;
     cameraInfo.K[8] = 1;
@@ -117,7 +117,7 @@ private:
     // cv::threshold(depth, depth, 3, 255, cv::THRESH_TOZERO);
 
     if (depth.type() == CV_16UC1)
-      depth.convertTo(depth, CV_16UC1, 3000./65535, 0);
+      depth.convertTo(depth, CV_16UC1, 1, 0);
     else
       depth.convertTo(depth, CV_16UC1, 3000./255, 0);
 
