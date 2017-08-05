@@ -34,6 +34,8 @@ struct Mesh {
   std::vector<cv::Point3f> points;
   std::vector<cv::Vec3f> normals;
   std::vector<Triangle> triangles;
+
+  cv::Point3f origin;
 };
 
 struct Pose {
@@ -66,7 +68,7 @@ cv::Mat poseToAffine(const ::Pose &pose);
 ::Silhouettef projectSurfacePoints(::Mesh &mesh, ::Pose &pose, ::Camera &camera);
 pcl::KdTreeFLANN<pcl::PointXY> getKdTree(const ::Silhouettef &sil);
 cv::Point2f getNearestPoint(pcl::KdTree<pcl::PointXY> &template_kdtree, const cv::Point2f &pt);
-std::tuple<cv::Mat, cv::Mat> computeResidualsAndWeights(const ::Silhouettef &data, const ::Silhouettef &template_2d);
+std::tuple<cv::Mat, cv::Mat> computeResidualsAndWeights(const ::Silhouettef &data, pcl::KdTree<pcl::PointXY> &template_kdtree);
 cv::Mat computeJacobian(::Pose &pose, ::Mesh &mesh, float h, ::Silhouettef &template_2d, cv::Mat &weights, ::Camera &camera);
 cv::Mat computeGradient(::Pose &pose, ::Mesh &mesh, double h, ::Silhouettef &template_2d, cv::Mat &weights, ::Camera &camera);
 
@@ -376,14 +378,18 @@ public:
     //world_camera.ks = {};
 
     this->segments.clear();
-    // this->fitted_silhouettes.clear();
+    this->fitted_silhouettes.clear();
     this->surface_edges.clear();
     this->surface_edges_blue.clear();
     this->labels.clear();
     this->pose_hypotheses.clear();
     this->histograms.clear();
 
+    int i = 0;
     for (auto &t_segment : t_segments) {
+      // if (i++ != 2)
+        // continue;
+
       rs::Segment segment = t_segment.segment.get();
 
       ::Silhouettef silhouette;
@@ -404,10 +410,10 @@ public:
         continue;
 
       // save surface edges to file
-      // std::ofstream ofs("/tmp/edges.txt");
-      // ofs << surface_edges.size() << std::endl;
-      // for (auto &pt : surface_edges)
-      //   ofs << pt.x << " " << pt.y << " " << std::endl;
+/*      std::ofstream ofs("/tmp/edges.txt");
+      ofs << surface_edges.size() << std::endl;
+      for (auto &pt : surface_edges)
+        ofs << pt.x << " " << pt.y << " " << std::endl;*/
 
       this->surface_edges.push_back(surface_edges);
       this->segments.push_back(i_segment);
@@ -430,10 +436,15 @@ public:
           double pr_fitness_score = 0;
           cv::Mat pr_trans = procrustesTransform(it->contour, silhouette, &pr_fitness_score);
 
-          std::vector<cv::Point2f> points_2d;
+          std::vector<cv::Point3f> points_3d;
+          for (auto &pt : mesh.points)
+            points_3d.push_back(pt - mesh.origin);
 
-          cv::projectPoints(mesh.points, it->pose.rot, it->pose.trans, silhouette_camera.matrix, silhouette_camera.ks, points_2d);
+          std::vector<cv::Point2f> points_2d;
+          cv::projectPoints(points_3d, it->pose.rot, it->pose.trans, silhouette_camera.matrix, silhouette_camera.ks, points_2d);
           points_2d = transform(pr_trans, points_2d);
+          #pragma omp critical
+          this->fitted_silhouettes.push_back(points_2d);
 
           cv::Mat r_vec(3, 1, cv::DataType<double>::type);
           cv::Mat t_vec(3, 1, cv::DataType<double>::type);
@@ -502,25 +513,29 @@ public:
           double cost = 0;
           cv::Mat jacobian;
 
-          // ofs << hyp.pose.rot(0) << " " << hyp.pose.rot(1) << " " << hyp.pose.rot(2) << " "
-          //     << hyp.pose.trans(0) << " " << hyp.pose.trans(1) << " " << hyp.pose.trans(2) << std::endl;
+/*          ofs << hyp.pose.rot(0) << " " << hyp.pose.rot(1) << " " << hyp.pose.rot(2) << " "
+              << hyp.pose.trans(0) << " " << hyp.pose.trans(1) << " " << hyp.pose.trans(2) << std::endl;*/
+          outInfo( "FILEPOSE: "<< hyp.pose.rot(0) << " " << hyp.pose.rot(1) << " " << hyp.pose.rot(2) << " "
+              << hyp.pose.trans(0) << " " << hyp.pose.trans(1) << " " << hyp.pose.trans(2) );
 
           outInfo("Running 2d-3d ICP ... ");
           std::tie(new_pose, cost, jacobian) = fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera);
           outInfo("\tdone: cost = " << cost);
-          assert(cost < 1 && cost >= 0);
+          // assert(cost < 1 && cost >= 0);
 
           hyp.pose = new_pose;
 
-          hyp.pose = alignObjectsPoseWithPlane(hyp.pose, plane_normal, plane_distance, jacobian);
+          // hyp.pose = alignObjectsPoseWithPlane(hyp.pose, cv::Vec3f(0, 0, 0), plane_normal, plane_distance, jacobian);
 
-          outInfo("Running 2d-3d ICP2 ... ");
-          std::tie(new_pose, cost, std::ignore) = fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera);
-          outInfo("\tdone: cost = " << cost);
+          // outInfo("Running 2d-3d ICP2 ... ");
+          // std::tie(new_pose, cost, std::ignore) = fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera/*, plane_normal*/);
+          // outInfo("\tdone: cost = " << cost);
 
-          hyp.pose = new_pose;
+          // hyp.pose = new_pose;
         }
       }
+      // cv::imwrite("/tmp/color.png", cas_image_rgb);
+      // cv::imwrite("/tmp/depth.png", cas_image_depth);
       // ofs.close();
       // break;
     }
@@ -562,10 +577,10 @@ protected:
     // ImageSegmentation::drawSegments2D(disp, this->segments, this->labels, 1, 0.5);
 
     // return;
-    // for (const auto &sil : this->fitted_silhouettes) {
-    //   for (auto &pt : sil)
-    //     cv::circle(disp, pt, 1, cv::Scalar(255, 0, 255), -1);
-    // }
+/*    for (const auto &sil : this->fitted_silhouettes) {
+      for (const auto &pt : sil)
+        cv::circle(disp, pt, 1, cv::Scalar(0, 0, 255), -1);
+    }*/
 
     cv::Mat transpR = cv::Mat::zeros(disp.size(), CV_8UC3);
     cv::Mat transpB = cv::Mat::zeros(disp.size(), CV_8UC3);
@@ -582,7 +597,6 @@ protected:
     for (auto &pt : sil)
       cv::circle(transpB, pt, 1, cv::Scalar(255, 0, 0), -1);*/
 
-    disp += transpR + transpB;
 
     for (size_t i = 0; i < this->labels.size(); ++i) {
       outInfo("draw");
@@ -602,6 +616,8 @@ protected:
       cv::Rect hist_src_rect = (hist_dst_rect - hist_dst_rect.tl()) & cv::Rect(cv::Point(), histograms[i].size());
       disp(hist_dst_rect) += histograms[i](hist_src_rect);
     }
+
+    disp += transpR + transpB;
   }
 
   static std::tuple<pcl::PointCloud<pcl::PointXYZRGBA>::Ptr, std::vector<pcl::Vertices>>
@@ -795,11 +811,17 @@ protected:
     assert(counts[PLYSection::VERTEX] == 0);
     assert(counts[PLYSection::FACE] == 0);
 
-    // cv::Point3f offset = max_pt - min_pt;
-    // for (auto &pt : points)
-    //   pt -= offset;
+    float scale = 0.122f/0.135f;
 
-    return {points, normals, triangles};
+    cv::Point3f offset = max_pt - min_pt;
+    for (auto &pt : points) {
+      // pt -= offset;
+      pt *= scale;
+    }
+
+    cv::Point3f origin = offset*scale;
+
+    return {points, normals, triangles, origin};
   }
 
   static ::EdgeModel getSampledFootprints(const Mesh &mesh, Camera &cam, int im_size,
@@ -837,8 +859,12 @@ protected:
   static ::Footprint getFootprint(const ::Mesh &mesh,
       const Pose &pose, ::Camera &cam,const int im_size, const int marg_size) {
     // project points on a plane
+    std::vector<cv::Point3f> points3d;
+    for (auto &pt : mesh.points)
+      points3d.push_back(pt - mesh.origin);
+
     std::vector<cv::Point2f> points2d;
-    cv::projectPoints(mesh.points, pose.rot, pose.trans, cam.matrix, cam.ks, points2d);
+    cv::projectPoints(points3d, pose.rot, pose.trans, cam.matrix, cam.ks, points2d);
 
     // find points2d bounding rect
     cv::Rect_<float> b_rect;
@@ -1099,14 +1125,38 @@ protected:
     return std::make_pair(distance, confidence);
   }
 
+  cv::Vec3f alignRotationToPlane(cv::Vec3f rodrigues, cv::Vec3f support_plane_normal) {
+    // find axes rotation transformation to align object's up to plane normal
+    cv::Vec3f objects_up_local(0, 1, 0);
+    ::Pose object_to_camera_rotation {rodrigues, cv::Vec3f(0, 0, 0)};
+    auto objects_up_camspace = transform(object_to_camera_rotation, objects_up_local);
+
+    double phi = std::acos(support_plane_normal.ddot(objects_up_camspace));
+
+    cv::Vec3f up_to_n_rot_axis = objects_up_camspace.cross(support_plane_normal);
+    cv::Vec3f rodrigues_up_to_n = up_to_n_rot_axis * (phi / cv::norm(up_to_n_rot_axis));
+
+    cv::Mat up_to_n_rotation;
+    cv::Rodrigues(rodrigues_up_to_n, up_to_n_rotation);
+
+
+    cv::Mat initial_rotation;
+    cv::Rodrigues(rodrigues, initial_rotation);
+    cv::Mat final_rotation = up_to_n_rotation * initial_rotation;
+
+    cv::Mat result;
+    cv::Rodrigues(final_rotation, result);
+
+    return result;
+  }
+
   // Assume that object's default orientation is bottom down, with origin point at zero;
   // returns a new pose for the object
-  ::Pose alignObjectsPoseWithPlane(::Pose initial_pose, cv::Vec3f support_plane_normal, const float support_plane_distance, cv::Mat &jacobian) {
+  ::Pose alignObjectsPoseWithPlane(::Pose initial_pose, cv::Vec3f mesh_anchor_point, cv::Vec3f support_plane_normal, const float support_plane_distance, cv::Mat &jacobian) {
     auto spd = support_plane_distance;
 
     // find anchor point
-    cv::Vec3f objects_anchor_point_local(0, 0, 0);
-    auto objects_anchor_point_camspace = transform(initial_pose, objects_anchor_point_local);
+    auto objects_anchor_point_camspace = transform(initial_pose, mesh_anchor_point);
 
     // find anchor point offset
     auto lambda = -spd + support_plane_normal.ddot(objects_anchor_point_camspace);
@@ -1123,24 +1173,15 @@ protected:
     outInfo("norm:" << support_plane_normal);
     outInfo("lambda:" << lambda);
     outInfo("Anchor offset:" << anchor_offset);
-    phi = std::min(phi, M_PI - phi);
+    // phi = std::min(phi, M_PI - phi);
 
     cv::Vec3f up_to_n_rot_axis = objects_up_camspace.cross(support_plane_normal);
     cv::Vec3f rodrigues_up_to_n = up_to_n_rot_axis * (phi / cv::norm(up_to_n_rot_axis));
 
-    // combine initial transformation and plane aligning
-/*    cv::Mat up_to_n_rotation;
-    cv::Rodrigues(rodrigues_up_to_n, up_to_n_rotation);
-
     ::Pose aligned_to_plane_objects_pose;
-    aligned_to_plane_objects_pose.trans = initial_pose.trans + anchor_offset;
 
-    cv::Mat initial_rotation;
-    cv::Rodrigues(initial_pose.rot, initial_rotation);
-    cv::Mat final_rotation = up_to_n_rotation * initial_rotation;
-
-    cv::Rodrigues(final_rotation, aligned_to_plane_objects_pose.rot);*/
-
+#undef LOCAL_AMBIGUITY_RESOLUTION 
+#if defined(LOCAL_AMBIGUITY_RESOLUTION)
     cv::Mat E = (cv::Mat_<double>(4, 6) <<
       0, 0, 0, support_plane_normal(0), support_plane_normal(1), support_plane_normal(2),
       0, 0, 0, 0, 0, 0,
@@ -1174,13 +1215,27 @@ protected:
       {x.at<double>(0), x.at<double>(1), x.at<double>(2)},
       {x.at<double>(3), x.at<double>(4), x.at<double>(5)}};
 
-    return initial_pose + align_to_plane_objects_pose;
+    aligned_to_plane_objects_pose = initial_pose + align_to_plane_objects_pose
+#else
+    cv::Mat up_to_n_rotation;
+    cv::Rodrigues(rodrigues_up_to_n, up_to_n_rotation);
+
+    aligned_to_plane_objects_pose.trans = initial_pose.trans + anchor_offset;
+
+    cv::Mat initial_rotation;
+    cv::Rodrigues(initial_pose.rot, initial_rotation);
+    cv::Mat final_rotation = up_to_n_rotation * initial_rotation;
+
+    cv::Rodrigues(final_rotation, aligned_to_plane_objects_pose.rot);
+#endif
+
+    return aligned_to_plane_objects_pose;
   }
 
-  std::tuple<::Pose, double, cv::Mat> fit2d3d(::Mesh &mesh, ::Pose &init_pose, ::Silhouettef &template_2d, ::Camera &camera) {
+  std::tuple<::Pose, double, cv::Mat> fit2d3d(::Mesh &mesh, ::Pose &init_pose, ::Silhouettef &template_2d, ::Camera &camera, cv::Vec3f normal_constraint = cv::Vec3f(0, 0, 0)) {
     ::Pose current_pose = init_pose;
-    float learning_rate = 1e-4;
-    size_t limit_iterations = 200;
+    float learning_rate = 2;//e-4;
+    size_t limit_iterations = 50;
     double limit_epsilon = 1e-5;
     size_t stall_counter = 0;
     double h = 1e-3;
@@ -1188,20 +1243,38 @@ protected:
     double last_error = 0;
     cv::Mat jacobian;
 
+    auto template_kdtree = getKdTree(template_2d);
+
+    this->surface_edges_blue.push_back(projectSurfacePoints(mesh, current_pose, camera));
+
     bool done {false};
     while (!done && limit_iterations) {
 
       Silhouettef sil_2d = projectSurfacePoints(mesh, current_pose, camera);
 
-      if (limit_iterations == 1)
-        this->surface_edges_blue.push_back(sil_2d);
+      // if (limit_iterations == 1)
+        // this->surface_edges_blue.push_back(sil_2d);
 
       cv::Mat residuals;
       cv::Mat weights;
-      std::tie(residuals, weights) = computeResidualsAndWeights(sil_2d, template_2d);
+      std::tie(residuals, weights) = computeResidualsAndWeights(sil_2d, template_kdtree);
 
-      double ref_error = cv::norm(residuals, cv::NORM_L2) / cv::sum(weights)[0];
-      outInfo("ref_error: " << ref_error << " (" << cv::sum(weights)[0] << "/" << weights.size() << ")") ;
+      double num {0};
+      double sum {0};
+      for (int i = 0; i < residuals.rows; ++i) {
+        // std::cout << residuals.at<float>(i) << " ";
+        if (residuals.at<float>(i) < 0.9f) {
+          sum += residuals.at<float>(i);
+          num++;
+        }
+      }
+
+      double ref_error = std::numeric_limits<double>::max();
+      if (num != 0)
+        ref_error = std::sqrt(sum) / num;
+
+      outInfo("ref_error: " << ref_error << " (" << num << "/" << weights.rows << ")") ;
+      // exit(0);
 
       if (std::abs(last_error - ref_error) < limit_epsilon) {
         if (stall_counter == 5) {
@@ -1223,37 +1296,26 @@ protected:
         ref_error = cv::norm(residuals, cv::NORM_L2);
         break;
       }
+      // jacobian = jacobian / cv::norm(jacobian, cv::NORM_INF);
       // outInfo("Jacobian: " << jacobian);
 
       // cv::Mat pinv_jacobian = jacobian.inv(cv::DECOMP_SVD);
       cv::Mat delta_pose_mat; //= pinv_jacobian * residuals;
       cv::solve(jacobian, residuals, delta_pose_mat, cv::DECOMP_SVD);
 
-      // double max_val = cv::norm(pinv_jacobian, cv::NORM_INF);
-      // outInfo("pinvJacobian norm: " << max_val);
-      outInfo("delta_pose:" << delta_pose_mat);
-
       ::Pose delta_pose;
       delta_pose.rot = cv::Vec3f(delta_pose_mat.at<float>(0), delta_pose_mat.at<float>(1), delta_pose_mat.at<float>(2));
       delta_pose.trans = cv::Vec3f(delta_pose_mat.at<float>(3), delta_pose_mat.at<float>(4), delta_pose_mat.at<float>(5));
 
-      // compute pose gradient at pose point
-/*      cv::Mat pose_gradient = computeGradient(current_pose, mesh, h, template_2d, weights, camera);
-      cv::Mat delta_pose_mat = pose_gradient;
-      outInfo("Gradient : " << pose_gradient);
-      ::Pose delta_pose {{
-        pose_gradient.at<double>(0, 0) * cost,
-        pose_gradient.at<double>(1, 0) * cost,
-        pose_gradient.at<double>(2, 0) * cost}, {
-        pose_gradient.at<double>(3, 0) * cost,
-        pose_gradient.at<double>(4, 0) * cost,
-        pose_gradient.at<double>(5, 0) * cost}
-      };*/
 
       current_pose = current_pose + (-1 * learning_rate) * delta_pose;
 
-      double step_size = cv::norm(delta_pose_mat);
-      outInfo("\tStep: " << step_size);
+      // check if normal constraint present
+      if (cv::norm(normal_constraint) > 0.1)
+        current_pose.rot = alignRotationToPlane(current_pose.rot, normal_constraint);
+
+      // double step_size = cv::norm(delta_pose_mat);
+      // outInfo("\tStep: " << step_size);
 
       --limit_iterations;
     }
@@ -1274,7 +1336,7 @@ private:
 
   std::vector<ImageSegmentation::Segment> segments;
   std::vector<std::vector<::PoseHypothesis>> pose_hypotheses;
-  // std::vector<Silhouettef> fitted_silhouettes;
+  std::vector<Silhouettef> fitted_silhouettes;
   std::vector<Silhouettef> surface_edges;
   std::vector<Silhouettef> surface_edges_blue;
   std::vector<std::string> labels;
@@ -1469,18 +1531,16 @@ cv::Point2f getNearestPoint(pcl::KdTree<pcl::PointXY> &template_kdtree, const cv
   return cv::Point2f(out_pt.x, out_pt.y);
 }
 
-std::tuple<cv::Mat, cv::Mat> computeResidualsAndWeights(const ::Silhouettef &data, const ::Silhouettef &template_2d) {
+std::tuple<cv::Mat, cv::Mat> computeResidualsAndWeights(const ::Silhouettef &data, pcl::KdTree<pcl::PointXY> &template_kdtree) {
   cv::Mat residuals(data.size(), 1, CV_32FC1);
   cv::Mat weights(data.size(), 1, CV_32FC1);
-
-  auto template_kdtree = getKdTree(template_2d);
 
   int i = 0;
   for (const auto &pt : data) {
     auto template_pt = getNearestPoint(template_kdtree, pt);
 
     float distance = cv::norm(template_pt - pt);
-    residuals.at<float>(i, 0) = distance;
+    residuals.at<float>(i, 0) = distance * distance;
     weights.at<float>(i, 0) = (distance <= 5); // or how do we check if point matches???
 
     i++;
@@ -1522,7 +1582,7 @@ const T &clamp(const T &v, const T &lo, const T &hi) {
 cv::Mat computeJacobian(::Pose &pose, ::Mesh &mesh, float h, ::Silhouettef &template_2d, cv::Mat &weights, ::Camera &camera) {
   size_t dof = 6;
 
-  Silhouettef d_ref = projectSurfacePoints(mesh, pose, camera);
+  // Silhouettef d_ref = projectSurfacePoints(mesh, pose, camera);
 
   auto template_kd = getKdTree(template_2d);
 
@@ -1541,10 +1601,10 @@ cv::Mat computeJacobian(::Pose &pose, ::Mesh &mesh, float h, ::Silhouettef &temp
       auto d_i_plus = getNearestPoint(template_kd, d_plus[i]);
       auto d_i_minus = getNearestPoint(template_kd, d_minus[i]);
 
-      double d1 = std::pow(cv::norm(d_i_plus - d_ref[i]), 2);
-      double d2 = std::pow(cv::norm(d_i_minus - d_ref[i]), 2);
+      double d1 = std::pow(cv::norm(d_i_plus - d_plus[i]), 2);
+      double d2 = std::pow(cv::norm(d_i_minus - d_minus[i]), 2);
 
-      float dei_daj = weights.at<float>(i, 0) * (d1 - d2) / (2 * h);
+      float dei_daj = weights.at<float>(i) * (d1 - d2) / (2 * h);
 
       // assert(dei_daj < 1000);
       // assert(dei_daj > -1000);
