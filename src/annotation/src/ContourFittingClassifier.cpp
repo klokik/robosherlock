@@ -533,6 +533,9 @@ public:
 
           // hyp.pose = new_pose;
         }
+
+        // repair using top hypothesis
+        drawHypothesisToCAS(cas, cas_image_depth, view_cloud, top_hypothesis);
       }
       // cv::imwrite("/tmp/color.png", cas_image_rgb);
       // cv::imwrite("/tmp/depth.png", cas_image_depth);
@@ -737,6 +740,52 @@ protected:
     for (const auto &pt2 : vertice_2d) {
       cv::circle(dst, pt2, 1, cv::Scalar(0, 255, 0), -1);
     }
+  }
+
+  void drawHypothesisToCAS(rs::SceneCas &cas, cv::Mat &cas_image_depth, pcl::PointCloud<pcl::PointXYZRGBA>::Ptr &cas_view_cloud, ::PoseHypothesis &hypothesis) {
+    cv::Mat cam_sp_transform = poseToAffine(hypothesis.pose);
+
+    auto &mesh = this->edge_models[hypothesis.model_name].mesh;
+
+    std::vector<cv::Point3f> vertice = transform(cam_sp_transform, mesh.points);
+
+    std::vector<cv::Point2f> vertice_2d;
+
+    cv::Mat draw_cam_matrix = (cv::Mat_<double>(3, 3) << 570.3422241210938, 0.0, 319.5, 0.0, 570.3422241210938, 239.5, 0.0, 0.0, 1.0);
+    cv::projectPoints(vertice, {}, {}, draw_cam_matrix, {}, vertice_2d);
+
+    cv::Mat mask = cv::Mat::zeros(cas_image_depth.size(), CV_8UC3);
+
+    for (const auto &tri : mesh.triangles) {
+      uint16_t avg_depth = (vertice[tri[0]].z + vertice[tri[1]].z + vertice[tri[2]].z) / 3;
+      cv::Scalar color = cv::Scalar(avg_depth);
+
+      std::vector<cv::Point2i> poly{
+          vertice_2d[tri[0]],
+          vertice_2d[tri[1]],
+          vertice_2d[tri[2]]};
+
+      cv::fillConvexPoly(mask, poly, color); // FIXME: use z-buffer
+    }
+
+    cas_image_depth += mask;
+
+    for (int i = 0; i < cas_view_cloud->width; ++i) {
+      for (int j = 0; j < cas_view_cloud->height; ++j) {
+        int id = j*cas_view_cloud->width + i;
+        if (mask.at<uint16_t>(j, i) != 0) {
+          cas_view_cloud->points[id].z = cas_image_depth.at<uint16_t>(j, i) / 1000.f;
+
+          cas_view_cloud->points[id].r = 128;
+          cas_view_cloud->points[id].g = 125;
+          cas_view_cloud->points[id].b = 0;
+          cas_view_cloud->points[id].a = 255;
+        }
+      }
+    }
+
+    cas.set(VIEW_DEPTH_IMAGE, cas_image_depth);
+    cas.set(VIEW_CLOUD, cas_view_cloud);
   }
 
   ::Mesh readTrainingMesh(std::string _filename) {
