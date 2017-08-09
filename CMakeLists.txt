@@ -174,7 +174,9 @@ add_subdirectory(src/tracking)
 
 catkin_add_gtest(${PROJECT_NAME}-test
     test/main.cpp
-    test/robosherlock/test.cpp)
+    test/robosherlock/test.cpp
+    test/robosherlock/TransparentSegmentationTest.cpp
+    )
 target_link_libraries(${PROJECT_NAME}-test
     rs_analysisEngineManager
     rs_core
