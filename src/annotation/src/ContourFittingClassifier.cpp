@@ -1028,7 +1028,7 @@ protected:
   }
 
 #if !PCL_SEGFAULT_WORKAROUND
-  static void silhouetteToPC(::Silhouettef &sil, pcl::PointCloud<pcl::PointXYZ> &pc) {
+  static void silhouetteToPC(const ::Silhouettef &sil, pcl::PointCloud<pcl::PointXYZ> &pc) {
     pc.width = sil.size();
     pc.height = 1;
     pc.is_dense = false;
@@ -1050,7 +1050,7 @@ protected:
     }
   }
 
-  static std::pair<::Silhouettef, double> fitICP(::Silhouettef &test, ::Silhouettef &model) {
+  static std::pair<cv::Mat, double> fitICP(const ::Silhouettef &test,const ::Silhouettef &model) {
     pcl::PointCloud<pcl::PointXYZ>::Ptr cl_test(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::PointCloud<pcl::PointXYZ>::Ptr cl_model(new pcl::PointCloud<pcl::PointXYZ>);
 
@@ -1069,10 +1069,21 @@ protected:
 
     double score = icp.getFitnessScore();
 
-    ::Silhouettef result;
-    PCToSilhouette(cl_result, result);
 
-    return {result, score};
+    Eigen::Matrix4f eig_trf = icp.getFinalTransformation ();
+
+    cv::Mat cv_trf(3, 3, CV_32FC1, cv::Scalar(0.f));
+    cv_trf.at<float>(0, 0) = eig_trf(0, 0);
+    cv_trf.at<float>(0, 1) = eig_trf(0, 1);
+    cv_trf.at<float>(1, 0) = eig_trf(1, 0);
+    cv_trf.at<float>(1, 1) = eig_trf(1, 1);
+
+    // assume that translation is small enough
+    cv_trf.at<float>(0, 2) = 0; //eig_trf(0, 3);
+    cv_trf.at<float>(1, 2) = 0; //eig_trf(1, 3);
+    cv_trf.at<float>(2, 2) = 1.f;
+
+    return {cv_trf, score};
   }
 
 #else
