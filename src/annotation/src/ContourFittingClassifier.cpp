@@ -71,6 +71,7 @@ cv::Point2f getNearestPoint(pcl::KdTree<pcl::PointXY> &template_kdtree, const cv
 std::tuple<cv::Mat, cv::Mat> computeResidualsAndWeights(const ::Silhouettef &data, pcl::KdTree<pcl::PointXY> &template_kdtree);
 cv::Mat computeJacobian(::Pose &pose, ::Mesh &mesh, float h, ::Silhouettef &template_2d, cv::Mat &weights, ::Camera &camera);
 cv::Mat computeGradient(::Pose &pose, ::Mesh &mesh, double h, ::Silhouettef &template_2d, cv::Mat &weights, ::Camera &camera);
+void checkLookup(cv::Mat &cam_mat, cv::Mat &lookupX, cv::Mat &lookupY);
 
 struct Footprint {
   cv::Mat img;
@@ -515,13 +516,11 @@ public:
 
 /*          ofs << hyp.pose.rot(0) << " " << hyp.pose.rot(1) << " " << hyp.pose.rot(2) << " "
               << hyp.pose.trans(0) << " " << hyp.pose.trans(1) << " " << hyp.pose.trans(2) << std::endl;*/
-          outInfo( "FILEPOSE: "<< hyp.pose.rot(0) << " " << hyp.pose.rot(1) << " " << hyp.pose.rot(2) << " "
-              << hyp.pose.trans(0) << " " << hyp.pose.trans(1) << " " << hyp.pose.trans(2) );
 
           outInfo("Running 2d-3d ICP ... ");
           std::tie(new_pose, cost, jacobian) = fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera);
           outInfo("\tdone: cost = " << cost);
-          // assert(cost < 1 && cost >= 0);
+          assert(cost < 1 && cost >= 0);
 
           hyp.pose = new_pose;
 
@@ -551,9 +550,7 @@ public:
 
 protected:
   void drawImageWithLock(cv::Mat &disp) override {
-    // disp = this->displ;
-    // return;
-    image_rgb.copyTo(disp);
+    // image_rgb.copyTo(disp);
 
     cv::Mat gray;
     cv::cvtColor(image_rgb, gray, CV_BGR2GRAY);
@@ -620,6 +617,15 @@ protected:
       disp(hist_dst_rect) += histograms[i](hist_src_rect);
     }
 
+    cv::Mat depth_map;
+    distance_mat.convertTo(depth_map, CV_8UC1, 255/1500.0, 0);
+    cv::cvtColor(depth_map, depth_map, CV_GRAY2BGR);
+    cv::resize(depth_map, depth_map, cv::Size(), 0.25, 0.25);
+
+    cv::Rect depth_roi(disp.cols - depth_map.cols, disp.rows - depth_map.rows,
+        depth_map.cols, depth_map.rows);
+    depth_map.copyTo(disp(depth_roi));
+
     disp += transpR + transpB;
   }
 
@@ -684,7 +690,9 @@ protected:
                                                   affine_3d_transform, (hyp.probability - 0.85) / 0.15);
 
         visualizer.removeShape(pcl_mesh_name);
-        assert(visualizer.addPolygonMesh<pcl::PointXYZRGBA>(cloud, polygons, pcl_mesh_name));
+
+        // auto result = visualizer.addPolygonMesh<pcl::PointXYZRGBA>(cloud, polygons, pcl_mesh_name);
+        // assert(result);
 
         ++i;
       }
@@ -742,7 +750,37 @@ protected:
     }
   }
 
-  void drawHypothesisToCAS(rs::SceneCas &cas, cv::Mat &cas_image_depth, pcl::PointCloud<pcl::PointXYZRGBA>::Ptr &cas_view_cloud, ::PoseHypothesis &hypothesis) {
+  void drawTriangleInterp(std::vector<cv::Point2f> &poly, std::vector<float> &vals, cv::Mat &dst) {
+    int min_x = std::floor(std::min(std::min(poly[0].x, poly[1].x), poly[2].x));
+    int min_y = std::floor(std::min(std::min(poly[0].y, poly[1].y), poly[2].y));
+    int max_x = std::ceil(std::max(std::max(poly[0].x, poly[1].x), poly[2].x));
+    int max_y = std::ceil(std::max(std::max(poly[0].y, poly[1].y), poly[2].y));
+
+    cv::Mat T = (cv::Mat_<float>(2, 2) <<
+      (poly[0].x - poly[2].x), (poly[1].x - poly[2].x),
+      (poly[0].y - poly[2].y), (poly[1].y - poly[2].y));
+    cv::Mat iT = T.inv();
+    cv::Mat r = (cv::Mat_<float>(2, 1));
+
+    for (int j = min_y; j < max_y; ++j)
+      for (int i = min_x; i < max_x; ++i) {
+        r.at<float>(0) = i - poly[2].x;
+        r.at<float>(1) = j - poly[2].y;
+
+        cv::Mat bc = iT * r;
+
+        float l1 = bc.at<float>(0);
+        float l2 = bc.at<float>(1);
+        float l3 = 1 - l1 - l2;
+
+        if (l1 >=0 && l2 >=0 && l3 >=0 && l1 <=1 && l2 <=1 && l3 <=1) {
+          uint16_t new_val = std::abs(vals[0]*l1 + vals[1]*l2 + vals[2]*l3); // XXX: WHY is it < 0 ????
+          dst.at<uint16_t>(j, i) = std::min(dst.at<uint16_t>(j, i), new_val);
+        }
+      }
+  }
+
+  void drawHypothesisToCAS(rs::SceneCas &cas, cv::Mat &cas_image_depth, pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cas_view_cloud, ::PoseHypothesis &hypothesis) {
     cv::Mat cam_sp_transform = poseToAffine(hypothesis.pose);
 
     auto &mesh = this->edge_models[hypothesis.model_name].mesh;
@@ -752,40 +790,53 @@ protected:
     std::vector<cv::Point2f> vertice_2d;
 
     cv::Mat draw_cam_matrix = (cv::Mat_<double>(3, 3) << 570.3422241210938, 0.0, 319.5, 0.0, 570.3422241210938, 239.5, 0.0, 0.0, 1.0);
-    cv::projectPoints(vertice, {}, {}, draw_cam_matrix, {}, vertice_2d);
+    cv::projectPoints(vertice, cv::Vec3f(0, 0, 0), cv::Vec3f(0, 0, 0), draw_cam_matrix, {}, vertice_2d);
 
-    cv::Mat mask = cv::Mat::zeros(cas_image_depth.size(), CV_8UC3);
+    uint16_t max_depth = 65535u;
+    cv::Mat mask = cv::Mat::ones(cas_image_depth.size(), CV_16UC1) * max_depth;
 
     for (const auto &tri : mesh.triangles) {
-      uint16_t avg_depth = (vertice[tri[0]].z + vertice[tri[1]].z + vertice[tri[2]].z) / 3;
-      cv::Scalar color = cv::Scalar(avg_depth);
+      std::vector<float> depth {
+        vertice[tri[0]].z * 1000,
+        vertice[tri[1]].z * 1000,
+        vertice[tri[2]].z * 1000};
 
-      std::vector<cv::Point2i> poly{
+      std::vector<cv::Point2f> poly{
           vertice_2d[tri[0]],
           vertice_2d[tri[1]],
           vertice_2d[tri[2]]};
 
-      cv::fillConvexPoly(mask, poly, color); // FIXME: use z-buffer
+      drawTriangleInterp(poly, depth, mask);
     }
 
-    cas_image_depth += mask;
+    mask.copyTo(cas_image_depth, (mask != max_depth));
+
+    checkLookup(draw_cam_matrix, this->lookupX, this->lookupY);
 
     for (int i = 0; i < cas_view_cloud->width; ++i) {
       for (int j = 0; j < cas_view_cloud->height; ++j) {
         int id = j*cas_view_cloud->width + i;
-        if (mask.at<uint16_t>(j, i) != 0) {
-          cas_view_cloud->points[id].z = cas_image_depth.at<uint16_t>(j, i) / 1000.f;
+        if (mask.at<uint16_t>(j, i) != max_depth) {
+          float depth_value = cas_image_depth.at<uint16_t>(j, i) / 1000.f;
 
-          cas_view_cloud->points[id].r = 128;
-          cas_view_cloud->points[id].g = 125;
-          cas_view_cloud->points[id].b = 0;
+          cas_view_cloud->points[id].x = depth_value * this->lookupX.at<float>(i);
+          cas_view_cloud->points[id].y = depth_value * this->lookupY.at<float>(j);
+          cas_view_cloud->points[id].z = depth_value;
+
+          auto rgb = this->image_rgb.at<cv::Vec<uint8_t, 3>>(j, i);
+
+          cas_view_cloud->points[id].r = rgb(0);
+          cas_view_cloud->points[id].g = rgb(1);
+          cas_view_cloud->points[id].b = rgb(2);
           cas_view_cloud->points[id].a = 255;
         }
       }
     }
 
     cas.set(VIEW_DEPTH_IMAGE, cas_image_depth);
-    cas.set(VIEW_CLOUD, cas_view_cloud);
+    cas.set(VIEW_CLOUD, *cas_view_cloud);
+
+    cas_image_depth.copyTo(this->distance_mat);
   }
 
   ::Mesh readTrainingMesh(std::string _filename) {
@@ -1394,8 +1445,10 @@ private:
   size_t counter {0};
 
   cv::Mat image_rgb;
-  cv::Mat distance_mat = cv::Mat(480, 640, CV_8UC3);
+  cv::Mat distance_mat = cv::Mat(480, 640, CV_16UC1);
 
+  cv::Mat lookupX;
+  cv::Mat lookupY;
   pcl::PointCloud<pcl::PointXYZRGBA>::Ptr view_cloud {new pcl::PointCloud<pcl::PointXYZRGBA>};
 
   ::Camera silhouette_camera;
@@ -1728,6 +1781,35 @@ cv::Mat computeGradient(::Pose &pose, ::Mesh &mesh, double h, ::Silhouettef &tem
   }
 
   return result;
+}
+
+void checkLookup(cv::Mat &cam_mat, cv::Mat &lookupX, cv::Mat &lookupY)
+{
+  if (!lookupX.empty() && !lookupY.empty())
+    return;
+
+  const float fx = 1.0f / cam_mat.at<double>(0, 0);
+  const float fy = 1.0f / cam_mat.at<double>(1, 1);
+  const float cx = cam_mat.at<double>(0, 2);
+  const float cy = cam_mat.at<double>(1, 2);
+  float *it;
+
+  size_t height = 480;
+  size_t width = 640;
+
+  lookupY = cv::Mat(1, height, CV_32F);
+  it = lookupY.ptr<float>();
+  for(size_t r = 0; r < height; ++r, ++it)
+  {
+    *it = (r - cy) * fy;
+  }
+
+  lookupX = cv::Mat(1, width, CV_32F);
+  it = lookupX.ptr<float>();
+  for(size_t c = 0; c < width; ++c, ++it)
+  {
+    *it = (c - cx) * fx;
+  }
 }
 
 // This macro exports an entry point that is used to create the annotator.
