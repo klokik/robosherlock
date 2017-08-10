@@ -148,6 +148,7 @@ private:
       else if(interface == "Files")
       {
         cameras.push_back(new FileCameraBridge(pt));
+      }
       else if(interface == "DataLoader")
       {
         cameras.push_back(new DataLoaderBridge(pt));

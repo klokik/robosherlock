@@ -8,6 +8,7 @@
 #include <ros/package.h>
 
 #define PCL_SEGFAULT_WORKAROUND 1
+#define LOCAL_AMBIGUITY_RESOLUTION 1
 
 #include <pcl/point_types.h>
 #include <pcl/kdtree/kdtree_flann.h>
@@ -524,7 +525,7 @@ public:
 
           hyp.pose = new_pose;
 
-          // hyp.pose = alignObjectsPoseWithPlane(hyp.pose, cv::Vec3f(0, 0, 0), plane_normal, plane_distance, jacobian);
+          hyp.pose = alignObjectsPoseWithPlane(hyp.pose, cv::Vec3f(0, 0, 0), plane_normal, plane_distance, jacobian);
 
           // outInfo("Running 2d-3d ICP2 ... ");
           // std::tie(new_pose, cost, std::ignore) = fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera/*, plane_normal*/);
@@ -911,7 +912,10 @@ protected:
     assert(counts[PLYSection::VERTEX] == 0);
     assert(counts[PLYSection::FACE] == 0);
 
-    float scale = 0.122f/0.135f;
+    float scale = 1.f;
+
+    if (_filename.find("pokal") != std::string::npos)
+      scale = 0.122f/0.135f;
 
     cv::Point3f offset = max_pt - min_pt;
     for (auto &pt : points) {
@@ -1291,8 +1295,7 @@ protected:
 
     ::Pose aligned_to_plane_objects_pose;
 
-#undef LOCAL_AMBIGUITY_RESOLUTION 
-#if defined(LOCAL_AMBIGUITY_RESOLUTION)
+#if LOCAL_AMBIGUITY_RESOLUTION
     cv::Mat E = (cv::Mat_<double>(4, 6) <<
       0, 0, 0, support_plane_normal(0), support_plane_normal(1), support_plane_normal(2),
       0, 0, 0, 0, 0, 0,
@@ -1326,7 +1329,7 @@ protected:
       {x.at<double>(0), x.at<double>(1), x.at<double>(2)},
       {x.at<double>(3), x.at<double>(4), x.at<double>(5)}};
 
-    aligned_to_plane_objects_pose = initial_pose + align_to_plane_objects_pose
+    aligned_to_plane_objects_pose = initial_pose + align_to_plane_objects_pose;
 #else
     cv::Mat up_to_n_rotation;
     cv::Rodrigues(rodrigues_up_to_n, up_to_n_rotation);

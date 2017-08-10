@@ -37,6 +37,9 @@
     <delegateAnalysisEngine key="CollectionReader">
       <import location="../annotators/io/CollectionReader.xml"/>
     </delegateAnalysisEngine>
+    <delegateAnalysisEngine key="ContourFittingClassifier">
+      <import location="../annotators/recognition/ContourFittingClassifier.xml"/>
+    </delegateAnalysisEngine>
     <delegateAnalysisEngine key="FeatureAnnotator">
       <import location="../annotators/annotation/FeatureAnnotator.xml"/>
     </delegateAnalysisEngine>
@@ -105,6 +108,9 @@
     </delegateAnalysisEngine>
     <delegateAnalysisEngine key="TFBroadcaster">
       <import location="../annotators/io/TFBroadcaster.xml"/>
+    </delegateAnalysisEngine>
+    <delegateAnalysisEngine key="TransparentSegmentationAnnotator">
+      <import location="../annotators/segmentation/TransparentSegmentationAnnotator.xml"/>
     </delegateAnalysisEngine>
     <delegateAnalysisEngine key="Trigger">
       <import location="../annotators/utils/Trigger.xml"/>

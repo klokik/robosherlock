@@ -157,7 +157,7 @@
         <name>camera_config_files</name>
         <value>
           <array>
-            <string>config_files_cam.ini</string>
+            <string>config_xtion.ini</string>
           </array>
         </value>
       </nameValuePair>
@@ -172,9 +172,9 @@
             <value>
                 <array>
                     <string>/res/other/pokal.ply|/res/other/pokal_edge.ply</string>
-                    <!-- <string>/res/other/lodrat.ply</string> -->
+                    <!-- <string>/res/other/lodrat.ply|/res/other/lodrat.ply</string> -->
                     <!-- <string>/res/other/godis.ply</string> -->
-                    <!-- <string>/res/other/oanvand_blue.ply</string> -->
+                    <string>/res/other/oanvand_blue.ply|/res/other/oanvand_blue_edge.ply</string>
                 </array>
             </value>
         </nameValuePair>
