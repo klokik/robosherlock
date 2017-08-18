@@ -112,6 +112,11 @@
           <rangeTypeName>rs.annotation.Segment</rangeTypeName>
         </featureDescription>
         <featureDescription>
+          <name>supportPlane</name>
+          <description></description>
+          <rangeTypeName>rs.annotation.Plane</rangeTypeName>
+        </featureDescription>
+        <featureDescription>
           <name>maxSurfaceDepth</name>
           <description></description>
           <rangeTypeName>uima.cas.Float</rangeTypeName>
