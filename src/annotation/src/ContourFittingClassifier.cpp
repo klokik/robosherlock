@@ -7,17 +7,7 @@
 #include <ros/ros.h>
 #include <ros/package.h>
 
-#define PCL_SEGFAULT_WORKAROUND 1
-
 #include <pcl/point_types.h>
-#include <pcl/kdtree/kdtree_flann.h>
-
-
-#if !PCL_SEGFAULT_WORKAROUND
-#include <pcl/registration/icp.h>
-#else
-#include "libicp/src/icpPointToPoint.h"
-#endif
 
 //RS
 #include <rs/types/all_types.h>
@@ -26,6 +16,7 @@
 #include <rs/DrawingAnnotator.h>
 #include <rs/segmentation/ImageSegmentation.h>
 #include <rs/utils/SimilarityRanking.h>
+#include <rs/utils/GeometryCV.h>
 #include <rs/utils/Drawing.h>
 
 using namespace uima;
@@ -125,45 +116,8 @@ struct Mesh {
   }
 };
 
-struct PoseRT {
-  cv::Vec3f rot;
-  cv::Vec3f trans;
-};
-
-class Camera {
-  public: cv::Mat matrix = cv::Mat::eye(3, 3, CV_32FC1);
-  public: std::vector<float> distortion;
-
-  public: void setFromMsgs(const sensor_msgs::CameraInfo &camInfo) {
-    float *it = this->matrix.ptr<float>(0);
-    for (size_t i = 0; i < 9; ++i, ++it)
-      *it = camInfo.K[i];
-
-    distortion.clear();
-    for(size_t i = 0; i < camInfo.D.size(); ++i)
-      this->distortion.push_back(camInfo.D[i]);
-  }
-};
-
-cv::Point2f transform(const cv::Mat &M, const cv::Point2f &pt);
-cv::Point3f transform(const cv::Mat &M, const cv::Point3f &pt);
-cv::Vec3f transform(const cv::Mat &M, const cv::Vec3f &vec);
-std::vector<cv::Point2f> transform(const cv::Mat &M, const std::vector<cv::Point2f> &pts);
-std::vector<cv::Point2f> transform(const cv::Mat &M, const std::vector<cv::Point2i> &pts);
-std::vector<cv::Point3f> transform(const cv::Mat &M, const std::vector<cv::Point3f> &pts);
-cv::Vec3f transform(const ::PoseRT &pose, const cv::Vec3f &vec);
-std::vector<cv::Point2f> normalizeEdge(const std::vector<cv::Point2f> &pts);
-cv::Rect_<float> getBoundingRect(const std::vector<cv::Point2f> &pts);
-cv::Mat poseRTToAffine(const ::PoseRT &pose);
-::PoseRT operator+(const ::PoseRT &a, const ::PoseRT &b);
-::PoseRT operator*(const double a, const ::PoseRT &b);
 std::vector<cv::Point2f> getCannyEdges(cv::Mat &grayscale, cv::Rect &input_roi);
-std::vector<cv::Point2f> projectSurfacePoints(::Mesh &mesh, ::PoseRT &pose, ::Camera &camera);
-pcl::KdTreeFLANN<pcl::PointXY> getKdTree(const std::vector<cv::Point2f> &pts);
-cv::Point2f getNearestPoint(pcl::KdTree<pcl::PointXY> &template_kdtree, const cv::Point2f &pt);
-std::tuple<cv::Mat, cv::Mat> computeDisparityResidualsAndWeights(const std::vector<cv::Point2f> &data, pcl::KdTree<pcl::PointXY> &template_kdtree);
-cv::Mat computeProximityJacobianForPoseRT(::PoseRT &pose, ::Mesh &mesh, float h, std::vector<cv::Point2f> &template_2d, cv::Mat &weights, ::Camera &camera);
-void checkViewCloudLookup(cv::Mat &cam_mat, cv::Mat &lookupX, cv::Mat &lookupY);
+void checkViewCloudLookup(const cv::Mat &cam_mat, cv::Mat &lookupX, cv::Mat &lookupY);
 
 class MeshFootprint {
 public:
@@ -184,7 +138,7 @@ public:
     std::vector<cv::Point2f> points2d;
     cv::projectPoints(points3d, pose.rot, pose.trans, camera.matrix, camera.distortion, points2d);
 
-    cv::Rect_<float> b_rect = getBoundingRect(points2d);
+    cv::Rect_<float> b_rect = GeometryCV::getBoundingRect(points2d);
 
     float rect_size = std::max(b_rect.width, b_rect.height);
     auto rate = im_size / rect_size;
@@ -233,8 +187,8 @@ public:
 
     cv::Mat bounding_matrix_inv = (cv::Mat_<float>(3, 3) << 1/rate, 0, b_rect.x - marg_size/rate,
                                                             0, 1/rate, b_rect.y - marg_size/rate, 0 , 0, 1);
-    std::vector<cv::Point2f> contour = transform(bounding_matrix_inv, contours[0]);
-    std::vector<cv::Point2f> normalized_contour = normalizeEdge(contour);
+    std::vector<cv::Point2f> contour = GeometryCV::transform(bounding_matrix_inv, contours[0]);
+    std::vector<cv::Point2f> normalized_contour = GeometryCV::normalizePoints(contour);
 
     // cv::Mat mkernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3));
     // cv::morphologyEx(footprint_img, footprint_img, cv::MORPH_GRADIENT, mkernel,
@@ -408,14 +362,6 @@ public:
 
     outInfo("Found " << t_segments.size() << " transparent segments");
 
-    // Camera
-    // cv::Mat K_ref = (cv::Mat_<double>(3, 3) << 570.3422241210938, 0.0, 319.5, 0.0, 570.3422241210938, 239.5, 0.0, 0.0, 1.0);
-    // cv::Mat distortion = (cv::Mat_<double>(5, 1) << 0, 0, 0, 0, 0);
-
-    // ::Camera world_camera;
-    // world_camera.matrix = K_ref;
-    //world_camera.ks = {};
-
     this->segments.clear();
     this->fitted_silhouettes.clear();
     this->surface_edges.clear();
@@ -461,7 +407,7 @@ public:
 
       // will be reinitialised by first chamfer distance call
       cv::Mat dist_transform(0, 0, CV_32FC1);
-      getChamferDistance(contour, contour, cas_image_depth.size(), dist_transform);
+      GeometryCV::getChamferDistance(contour, contour, cas_image_depth.size(), dist_transform);
 
       for (const auto &kv : this->edge_models) {
         auto &mesh = kv.second.mesh;
@@ -472,7 +418,7 @@ public:
           ::PoseHypothesis hypothesis(kv.first, std::distance(kv.second.items.cbegin(), it), 0);
 
           double pr_fitness_score = 0;
-          cv::Mat pr_trans = fitProcrustes2d(it->outerEdge, contour, &pr_fitness_score);
+          cv::Mat pr_trans = GeometryCV::fitProcrustes2d(it->outerEdge, contour, &pr_fitness_score);
 
           std::vector<cv::Point3f> points_3d;
           for (auto &pt : mesh.points)
@@ -480,7 +426,7 @@ public:
 
           std::vector<cv::Point2f> points_2d;
           cv::projectPoints(points_3d, it->pose.rot, it->pose.trans, silhouette_camera.matrix, silhouette_camera.distortion, points_2d);
-          points_2d = transform(pr_trans, points_2d);
+          points_2d = GeometryCV::transform(pr_trans, points_2d);
           // #pragma omp critical
           // this->fitted_silhouettes.push_back(points_2d);
 
@@ -500,7 +446,7 @@ public:
 
           double distance, confidence;
           auto trans_mesh_fp = ::MeshFootprint(mesh, pose_3d, this->camera, this->footprint_image_size);
-          std::tie(distance, confidence) = getChamferDistance(trans_mesh_fp.outerEdge, contour, cas_image_depth.size(), dist_transform);
+          std::tie(distance, confidence) = GeometryCV::getChamferDistance(trans_mesh_fp.outerEdge, contour, cas_image_depth.size(), dist_transform);
 
           hypothesis.setScore(std::exp(-distance) * confidence);
 
@@ -575,7 +521,7 @@ public:
 
       auto top_hypotheses = poseRanking.getTop(1);
       if (this->repairPointCloud && (top_hypotheses.size() > 0))
-        this->drawHypothesisToCAS(cas, cas_image_depth, view_cloud, top_hypotheses[0]);
+        this->drawHypothesisToCAS(cas, cas_image_depth, view_cloud, top_hypotheses[0], this->camera);
 
       // cv::imwrite("/tmp/color.png", cas_image_rgb);
       // cv::imwrite("/tmp/depth.png", cas_image_depth);
@@ -690,7 +636,7 @@ protected:
     cloud->points.resize(cloud->width * cloud->height);
 
     for (size_t i = 0; i < mesh.points.size(); ++i) {
-      auto pt = transform(trans, mesh.points[i]);
+      auto pt = GeometryCV::transform(trans, mesh.points[i]);
       auto &cpt = cloud->points[i];
       cpt.x = -pt.x;
       cpt.y = -pt.y;
@@ -725,7 +671,7 @@ protected:
         pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloud;
         std::vector<pcl::Vertices> polygons;
 
-        cv::Mat affine_3d_transform = poseRTToAffine(hyp.pose);
+        cv::Mat affine_3d_transform = GeometryCV::poseRTToAffine(hyp.pose);
         std::tie(cloud, polygons) = meshToPCLMesh(this->edge_models[hyp.getClass()].mesh,
                                                   affine_3d_transform, (hyp.getScore() - 0.85) / 0.15);
 
@@ -790,42 +736,12 @@ protected:
     }
   }
 
-  void drawTriangleInterp(std::vector<cv::Point2f> &poly, std::vector<float> &vals, cv::Mat &dst) {
-    int min_x = std::floor(std::min(std::min(poly[0].x, poly[1].x), poly[2].x));
-    int min_y = std::floor(std::min(std::min(poly[0].y, poly[1].y), poly[2].y));
-    int max_x = std::ceil(std::max(std::max(poly[0].x, poly[1].x), poly[2].x));
-    int max_y = std::ceil(std::max(std::max(poly[0].y, poly[1].y), poly[2].y));
-
-    cv::Mat T = (cv::Mat_<float>(2, 2) <<
-      (poly[0].x - poly[2].x), (poly[1].x - poly[2].x),
-      (poly[0].y - poly[2].y), (poly[1].y - poly[2].y));
-    cv::Mat iT = T.inv();
-    cv::Mat r = (cv::Mat_<float>(2, 1));
-
-    for (int j = min_y; j < max_y; ++j)
-      for (int i = min_x; i < max_x; ++i) {
-        r.at<float>(0) = i - poly[2].x;
-        r.at<float>(1) = j - poly[2].y;
-
-        cv::Mat bc = iT * r;
-
-        float l1 = bc.at<float>(0);
-        float l2 = bc.at<float>(1);
-        float l3 = 1 - l1 - l2;
-
-        if (l1 >=0 && l2 >=0 && l3 >=0 && l1 <=1 && l2 <=1 && l3 <=1) {
-          uint16_t new_val = std::abs(vals[0]*l1 + vals[1]*l2 + vals[2]*l3); // XXX: WHY is it < 0 ????
-          dst.at<uint16_t>(j, i) = std::min(dst.at<uint16_t>(j, i), new_val);
-        }
-      }
-  }
-
   void drawHypothesisToCAS(rs::SceneCas &cas, cv::Mat &cas_image_depth, pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cas_view_cloud, ::PoseHypothesis &hypothesis, const ::Camera &camera) {
-    cv::Mat cam_sp_transform = poseRTToAffine(hypothesis.pose);
+    cv::Mat cam_sp_transform = GeometryCV::poseRTToAffine(hypothesis.pose);
 
     auto &mesh = this->edge_models[hypothesis.getClass()].mesh;
 
-    std::vector<cv::Point3f> vertice = transform(cam_sp_transform, mesh.points);
+    std::vector<cv::Point3f> vertice = GeometryCV::transform(cam_sp_transform, mesh.points);
 
     std::vector<cv::Point2f> vertice_2d;
     cv::projectPoints(vertice, cv::Vec3f(0, 0, 0), cv::Vec3f(0, 0, 0), camera.matrix, camera.distortion, vertice_2d);
@@ -837,7 +753,7 @@ protected:
 
     depth_map.copyTo(cas_image_depth, (depth_map != max_depth));
 
-    checkViewCloudLookup(draw_cam_matrix, this->lookupX, this->lookupY);
+    checkViewCloudLookup(camera.matrix, this->lookupX, this->lookupY);
 
     for (int i = 0; i < cas_view_cloud->width; ++i) {
       for (int j = 0; j < cas_view_cloud->height; ++j) {
@@ -865,217 +781,13 @@ protected:
     cas_image_depth.copyTo(this->distance_mat);
   }
 
-#if !PCL_SEGFAULT_WORKAROUND
-  static void silhouetteToPC(const std::vector<cv::Point2f> &sil, pcl::PointCloud<pcl::PointXYZ> &pc) {
-    pc.width = sil.size();
-    pc.height = 1;
-    pc.is_dense = false;
-
-    pc.resize(pc.width * pc.height);
-
-    for (size_t i = 0; i < sil.size(); ++i) {
-      pc.points[i] = {sil[i].x, sil[i].y, 0};
-    }
-  }
-
-  static void PCToSilhouette(pcl::PointCloud<pcl::PointXYZ> &pc, std::vector<cv::Point2f> &sil) {
-    sil.clear();
-
-    assert(pc.height == 1);
-
-    for (size_t i = 0; i < pc.width; ++i) {
-      sil.push_back(cv::Point2f(pc.points[i].x, pc.points[i].y));
-    }
-  }
-
-  static std::pair<cv::Mat, double> fitICP(const std::vector<cv::Point2f> &test,const std::vector<cv::Point2f> &model) {
-    pcl::PointCloud<pcl::PointXYZ>::Ptr cl_test(new pcl::PointCloud<pcl::PointXYZ>);
-    pcl::PointCloud<pcl::PointXYZ>::Ptr cl_model(new pcl::PointCloud<pcl::PointXYZ>);
-
-    silhouetteToPC(test, *cl_test);
-    silhouetteToPC(model, *cl_model);
-
-    pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
-    icp.setInputSource(cl_test);
-    icp.setInputTarget(cl_model);
-
-    pcl::PointCloud<pcl::PointXYZ> cl_result;
-
-    icp.align(cl_result);
-
-    assert(icp.hasConverged());
-
-    double score = icp.getFitnessScore();
-
-
-    Eigen::Matrix4f eig_trf = icp.getFinalTransformation ();
-
-    cv::Mat cv_trf(3, 3, CV_32FC1, cv::Scalar(0.f));
-    cv_trf.at<float>(0, 0) = eig_trf(0, 0);
-    cv_trf.at<float>(0, 1) = eig_trf(0, 1);
-    cv_trf.at<float>(1, 0) = eig_trf(1, 0);
-    cv_trf.at<float>(1, 1) = eig_trf(1, 1);
-
-    // assume that translation is small enough
-    cv_trf.at<float>(0, 2) = 0; //eig_trf(0, 3);
-    cv_trf.at<float>(1, 2) = 0; //eig_trf(1, 3);
-    cv_trf.at<float>(2, 2) = 1.f;
-
-    return {cv_trf, score};
-  }
-
-#else
-
-  static std::pair<cv::Mat, double> fitICP(const std::vector<cv::Point2f> &test, const std::vector<cv::Point2f> &model) {
-
-    std::vector<double> test_arr;
-    std::vector<double> model_arr;
-
-    for (const auto &pt : test) {
-      test_arr.push_back(pt.x);
-      test_arr.push_back(pt.y);
-    }
-
-    for (const auto &pt : model) {
-      model_arr.push_back(pt.x);
-      model_arr.push_back(pt.y);
-    }
-
-    int dim = 2; // 2D
-
-    Matrix rot = Matrix::eye(2); // libipc matrix
-    Matrix trans(2,1);           // libipc matrix
-
-    IcpPointToPoint icp(&test_arr[0], test.size(), dim);
-    double score = icp.fit(&model_arr[0], model.size(), rot, trans, -1);
-
-    cv::Mat cv_trf(3, 3, CV_32FC1, cv::Scalar(0.f));
-    cv_trf.at<float>(0, 0) = rot.val[0][0];
-    cv_trf.at<float>(0, 1) = rot.val[1][0];
-    cv_trf.at<float>(1, 0) = rot.val[0][1];
-    cv_trf.at<float>(1, 1) = rot.val[1][1];
-
-    // assume that translation is small enough
-    cv_trf.at<float>(0, 2) = 0; //trans.val[0][0];
-    cv_trf.at<float>(1, 2) = 0; //trans.val[1][0];
-    cv_trf.at<float>(2, 2) = 1.f;
-
-    return {cv_trf, score};
-  }
-#endif
-
-  static std::pair<cv::Vec2f, float> getMeanAndStdDev(const std::vector<cv::Point2f> &sil) {
-    cv::Point2f mean = std::accumulate(sil.cbegin(), sil.cend(), cv::Point2f());
-    mean *= (1.f / sil.size());
-
-    float std_dev = 0;
-    for (auto &pt : sil)
-      std_dev += std::pow(cv::norm(cv::Point2f(pt.x, pt.y) - mean), 2);
-
-    std_dev = std::sqrt(std_dev / sil.size());
-
-    return std::make_pair(mean, std_dev);
-  }
-
-  static cv::Mat fitProcrustes2d(const std::vector<cv::Point2f> &sil, const std::vector<cv::Point2f> &tmplt, double *fitness_score = nullptr) {
-    cv::Vec2f mean_s, mean_t;
-    float deviation_s, deviation_t;
-
-    // FIXME: avoid double mean/deviation computation
-    std::tie(mean_s, deviation_s) = getMeanAndStdDev(sil);
-    std::tie(mean_t, deviation_t) = getMeanAndStdDev(tmplt);
-
-    auto ns = normalizeEdge(sil);
-    auto nt = normalizeEdge(tmplt);
-
-    cv::Mat icp_mat;
-    double fitness;
-    std::tie(icp_mat, fitness) = fitICP(ns, nt);
-
-    if (fitness_score)
-      *fitness_score = fitness;
-
-    cv::Mat Ts_inv = (cv::Mat_<float>(3, 3) << 1, 0, -mean_s(0), 0, 1, -mean_s(1), 0 , 0, 1);
-    cv::Mat Ss_inv = (cv::Mat_<float>(3, 3) << 1/deviation_s, 0, 0, 0, 1/deviation_s, 0, 0 , 0, 1);
-    cv::Mat Rst = icp_mat;
-    cv::Mat St = (cv::Mat_<float>(3, 3) << deviation_t, 0, 0, 0, deviation_t, 0, 0 , 0, 1);
-    cv::Mat Tt = (cv::Mat_<float>(3, 3) << 1, 0, mean_t(0), 0, 1, mean_t(1), 0 , 0, 1);
-
-    cv::Mat sil_to_tmplt_transformation = Tt * St * Rst * Ss_inv * Ts_inv;
-
-    return sil_to_tmplt_transformation;
-  }
-
-  std::pair<double, double> getChamferDistance(std::vector<cv::Point2f> &a, std::vector<cv::Point2f> &b, cv::Size work_area, cv::Mat &dist_transform) {
-    double distance_sum = 0;
-    size_t num_points_hit = 0;
-
-    if (dist_transform.empty()) {
-      cv::Mat sil_map_b = cv::Mat::ones(work_area, CV_8UC1);
-      for (auto it = b.begin(); it != std::prev(b.end()); it = std::next(it))
-        cv::line(sil_map_b, *it, *std::next(it), cv::Scalar(0));
-      cv::line(sil_map_b, b.back(), b.front(), cv::Scalar(0));
-
-      // auto rect_a = ::getBoundingRect(a);
-      // auto rect_b = ::getBoundingRect(b);
-      // cv::Rect roi = (rect_a | rect_b) & cv::Rect_<float>(cv::Point(0, 0), work_area);
-
-      dist_transform = cv::Mat(sil_map_b.size(), CV_32FC1, cv::Scalar(0.f));
-      // cv::distanceTransform(sil_map_b(roi), dist_transform(roi), CV_DIST_L2, 3);
-      cv::distanceTransform(sil_map_b, dist_transform, CV_DIST_L2, 3);
-    }
-
-    auto work_rect = cv::Rect(cv::Point(0, 0), work_area);
-    for (const auto &pt : a) {
-      auto pti = cv::Point(pt.x, pt.y);
-      if (work_rect.contains(pti)) {
-        distance_sum += dist_transform.at<float>(pti);
-        num_points_hit += 1;
-      }
-    }
-
-    double confidence = static_cast<double>(num_points_hit) / a.size();
-
-    if (confidence == 0)
-      throw std::runtime_error("input contour is too large or contains no points");
-
-    double distance = distance_sum / num_points_hit;
-
-    return std::make_pair(distance, confidence);
-  }
-
-  cv::Vec3f alignRotationWithPlane(cv::Vec3f rodrigues, cv::Vec3f support_plane_normal) {
-    // find axes rotation transformation to align object's up to plane normal
-    cv::Vec3f objects_up_local(0, 1, 0);
-    ::PoseRT object_to_camera_rotation {rodrigues, cv::Vec3f(0, 0, 0)};
-    auto objects_up_camspace = transform(object_to_camera_rotation, objects_up_local);
-
-    double phi = std::acos(support_plane_normal.ddot(objects_up_camspace));
-
-    cv::Vec3f up_to_n_rot_axis = objects_up_camspace.cross(support_plane_normal);
-    cv::Vec3f rodrigues_up_to_n = up_to_n_rot_axis * (phi / cv::norm(up_to_n_rot_axis));
-
-    cv::Mat up_to_n_rotation;
-    cv::Rodrigues(rodrigues_up_to_n, up_to_n_rotation);
-
-
-    cv::Mat initial_rotation;
-    cv::Rodrigues(rodrigues, initial_rotation);
-    cv::Mat final_rotation = up_to_n_rotation * initial_rotation;
-
-    cv::Mat result;
-    cv::Rodrigues(final_rotation, result);
-
-    return result;
-  }
-
   // Assume that object's default orientation is bottom down, with origin point at zero;
   // returns a new pose for the object
   ::PoseRT alignObjectsPoseWithPlane(::PoseRT initial_pose, cv::Vec3f mesh_anchor_point, cv::Vec3f support_plane_normal, const float support_plane_distance, cv::Mat &jacobian) {
     auto spd = support_plane_distance;
 
     // find anchor point
-    auto objects_anchor_point_camspace = transform(initial_pose, mesh_anchor_point);
+    auto objects_anchor_point_camspace = GeometryCV::transform(initial_pose, mesh_anchor_point);
 
     // find anchor point offset
     auto lambda = -spd + support_plane_normal.ddot(objects_anchor_point_camspace);
@@ -1084,7 +796,7 @@ protected:
     // find axes rotation transformation to align object's up to plane normal
     cv::Vec3f objects_up_local(0, 1, 0);
     ::PoseRT object_to_camera_rotation {initial_pose.rot, cv::Vec3f(0, 0, 0)};
-    auto objects_up_camspace = transform(object_to_camera_rotation, objects_up_local);
+    auto objects_up_camspace = GeometryCV::transform(object_to_camera_rotation, objects_up_local);
 
     double phi = std::acos(support_plane_normal.ddot(objects_up_camspace));
     outInfo("Phi: " << phi);
@@ -1187,115 +899,6 @@ private:
   ::Camera silhouette_camera;
 };
 
-cv::Point2f transform(const cv::Mat &M, const cv::Point2f &pt) {
-  cv::Mat vec(3, 1, CV_32FC1);
-
-  vec.at<float>(0, 0) = pt.x;
-  vec.at<float>(1, 0) = pt.y;
-  vec.at<float>(2, 0) = 1.f;
-
-  cv::Mat dst = M * vec;
-
-  return cv::Point2f(dst.at<float>(0, 0), dst.at<float>(1, 0));
-}
-
-cv::Point3f transform(const cv::Mat &M, const cv::Point3f &pt) {
-  cv::Mat vec(4, 1, CV_32FC1);
-
-  vec.at<float>(0, 0) = pt.x;
-  vec.at<float>(1, 0) = pt.y;
-  vec.at<float>(2, 0) = pt.z;
-  vec.at<float>(3, 0) = 1.f;
-
-  cv::Mat dst = M * vec;
-
-  return cv::Point3f(dst.at<float>(0, 0), dst.at<float>(1, 0), dst.at<float>(2, 0));
-}
-
-cv::Vec3f transform(const cv::Mat &M, const cv::Vec3f &vec) {
-  cv::Point3f pt(vec[0], vec[1], vec[2]);
-
-  return transform(M, pt);
-}
-
-cv::Vec3f transform(const ::PoseRT &pose, const cv::Vec3f &vec) {
-  cv::Mat M = poseRTToAffine(pose);
-
-  return transform(M, vec);
-}
-
-std::vector<cv::Point2f> transform(const cv::Mat &M, const std::vector<cv::Point2f> &pts) {
-  std::vector<cv::Point2f> result;
-
-  for (const auto &pt : pts)
-    result.push_back(transform(M, pt));
-
-  return result;
-}
-
-std::vector<cv::Point2f> transform(const cv::Mat &M, const std::vector<cv::Point2i> &pts) {
-  std::vector<cv::Point2f> result;
-
-  for (const auto &pt : pts) {
-    cv::Point2f ptf(pt.x, pt.y);
-
-    result.push_back(transform(M, ptf));
-  }
-
-  return result;
-}
-
-std::vector<cv::Point3f> transform(const cv::Mat &M, const std::vector<cv::Point3f> &points) {
-  std::vector<cv::Point3f> result;
-  result.reserve(points.size());
-
-  for (const auto &pt : points)
-    result.push_back(transform(M, pt));
-
-  return result;
-}
-
-std::vector<cv::Point2f> normalizeEdge(const std::vector<cv::Point2f> &pts) {
-  std::vector<cv::Point2f> result;
-  for (const auto &pt : pts)
-    result.push_back(pt);
-
-  cv::Point2f mean = std::accumulate(pts.cbegin(), pts.cend(), cv::Point2f());
-  mean *= (1.f / pts.size());
-
-  float std_dev = 0;
-
-  for (auto &pt : result) {
-    pt = pt - mean;
-    std_dev += std::pow(cv::norm(pt), 2);
-  }
-
-  std_dev = std::sqrt(std_dev / pts.size());
-
-  for (auto &pt : result)
-    pt *= 1.f / std_dev;
-
-  return result;
-}
-
-cv::Rect_<float> getBoundingRect(const std::vector<cv::Point2f> &pts) {
-  cv::Rect_<float> b_rect;
-
-  auto h_it = std::minmax_element(pts.cbegin(), pts.cend(),
-    [](const cv::Point2f &a, const cv::Point2f &b) {
-      return a.x < b.x;});
-  auto v_it = std::minmax_element(pts.cbegin(), pts.cend(),
-    [](const cv::Point2f &a, const cv::Point2f &b) {
-      return a.y < b.y;});
-
-  b_rect.x = h_it.first->x;
-  b_rect.y = v_it.first->y;
-  b_rect.width = h_it.second->x - b_rect.x;
-  b_rect.height = v_it.second->y - b_rect.y;
-
-  return b_rect;
-}
-
 std::vector<cv::Point2f> getCannyEdges(cv::Mat &grayscale, cv::Rect &input_roi) {
   auto roi = input_roi;
 
@@ -1327,7 +930,7 @@ std::vector<cv::Point2f> getCannyEdges(cv::Mat &grayscale, cv::Rect &input_roi) 
   return result;
 }
 
-void checkViewCloudLookup(cv::Mat &cam_mat, cv::Mat &lookupX, cv::Mat &lookupY)
+void checkViewCloudLookup(const cv::Mat &cam_mat, cv::Mat &lookupX, cv::Mat &lookupY)
 {
   if (!lookupX.empty() && !lookupY.empty())
     return;
