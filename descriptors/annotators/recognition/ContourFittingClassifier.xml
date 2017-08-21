@@ -10,7 +10,7 @@
     <vendor/>
     <configurationParameters>
         <configurationParameter>
-            <name>referenceShapes</name>
+            <name>referenceMeshes</name>
             <type>String</type>
             <multiValued>true</multiValued>
             <mandatory>true</mandatory>
@@ -34,7 +34,7 @@
             <mandatory>true</mandatory>
         </configurationParameter>
         <configurationParameter>
-            <name>silhouetteImageSize</name>
+            <name>footprintImageSize</name>
             <type>Integer</type>
             <multiValued>false</multiValued>
             <mandatory>true</mandatory>
@@ -46,18 +46,24 @@
             <mandatory>true</mandatory>
         </configurationParameter>
         <configurationParameter>
-            <name>icpIterationsProcrustes</name>
+            <name>icp2d3dIterationsLimit</name>
             <type>Integer</type>
+            <multiValued>false</multiValued>
+            <mandatory>true</mandatory>
+        </configurationParameter>
+        <configurationParameter>
+            <name>repairPointCloud</name>
+            <type>Boolean</type>
             <multiValued>false</multiValued>
             <mandatory>true</mandatory>
         </configurationParameter>
     </configurationParameters>
     <configurationParameterSettings>
         <nameValuePair>
-            <name>referenceShapes</name>
+            <name>referenceMeshes</name>
             <value>
                 <array>
-                    <string>/res/disc.ply|/res/disc.ply</string>
+                    <string>/res/disc.ply</string>
                 </array>
             </value>
         </nameValuePair>
@@ -80,7 +86,7 @@
             </value>
         </nameValuePair>
         <nameValuePair>
-            <name>silhouetteImageSize</name>
+            <name>footprintImageSize</name>
             <value>
                 <integer>32</integer>
             </value>
@@ -92,9 +98,15 @@
             </value>
         </nameValuePair>
         <nameValuePair>
-            <name>icpIterationsProcrustes</name>
+            <name>icp2d3dIterationsLimit</name>
             <value>
                 <integer>100</integer>
+            </value>
+        </nameValuePair>
+        <nameValuePair>
+            <name>repairPointCloud</name>
+            <value>
+                <boolean>true</boolean>
             </value>
         </nameValuePair>
     </configurationParameterSettings>

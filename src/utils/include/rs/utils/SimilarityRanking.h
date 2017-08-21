@@ -43,6 +43,8 @@ class SimilarityRanking {
   public: using ClassId = typename RankingItem_t::class_id_t;
   public: using SampleId = typename RankingItem_t::sample_id_t;
 
+  public: using Container_t = std::map<ClassId, std::vector<RankingItem_t>>;
+
   public: size_t size() noexcept {
     std::lock_guard<std::mutex> lock(this->itemsLock);
     size_t count = 0;
@@ -130,6 +132,54 @@ class SimilarityRanking {
     }
   }
 
+  public: std::vector<float> getHistogram() const {
+    throw std::runtime_error("not implemented");
+  }
+
+  public: class Iterator : public std::iterator<std::forward_iterator_tag, RankingItem_t> {
+    public: typename Container_t::iterator class_it;
+    public: typename Container_t::mapped_type::iterator sample_it;
+
+    public: Iterator &operator ++ () {
+      if (this->sample_it != this->class_it->end())
+        ++(this->sample_it);
+      else {
+        this->sample_it = (++this->class_it)->begin();
+      }
+    }
+
+    public: Iterator operator ++ (int) {
+      Iterator retval = *this;
+      this->operator ++ ();
+
+      return retval;
+    }
+
+    public: bool operator == (Iterator it) const {
+      return (this->class_it == it.class_it && this->sample_it == it->sample_it);
+    }
+
+    public: bool operator != (Iterator it) const {
+      return !(*this == it);
+    }
+
+    RankingItem_t &operator * () const {
+      return *sample_it;
+    }
+  };
+
+  public: Iterator begin() {
+    assert(!this->items.empty());
+
+    return {this->items.begin(), this->items.begin()->begin()};
+  }
+
+  public: Iterator end() {
+    assert(!this->items.empty());
+
+    return {this->items.end(), this->items.end()->end()};
+  }
+
   private: double getMaxScore() {
     double max_score = std::accumulate(this->items.begin(), this->items.end(), 0.,
       [](const double acc, const std::pair<ClassId, std::vector<RankingItem_t>> &kv) {
@@ -149,5 +199,5 @@ class SimilarityRanking {
 
   private: std::mutex itemsLock;
   // TODO: use set instead of vector;
-  private: std::map<ClassId, std::vector<RankingItem_t>> items;
+  private: Container_t items;
 };

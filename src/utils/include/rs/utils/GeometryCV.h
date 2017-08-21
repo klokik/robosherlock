@@ -1,16 +1,16 @@
 #pragma once
 
 #include <pcl/point_types.h>
-#include <pcl/kdtree/kdtree_flann.h>
+// #include <pcl/search/kdtree.h>
 
 
-#define PCL_SEGFAULT_WORKAROUND 0
+/*#define PCL_SEGFAULT_WORKAROUND 0
 
 #if !PCL_SEGFAULT_WORKAROUND
 #include <pcl/registration/icp.h>
 #else
 #include "libicp/src/icpPointToPoint.h"
-#endif
+#endif*/
 
 
 
@@ -162,7 +162,7 @@ namespace GeometryCV {
     return b_rect;
   }
 
-  pcl::KdTreeFLANN<pcl::PointXY> getKdTree(const std::vector<cv::Point2f> &sil) {
+/*  pcl::search::KdTree<pcl::PointXY> getKdTree(const std::vector<cv::Point2f> &sil) {
     pcl::PointCloud<pcl::PointXY>::Ptr input_cloud {new pcl::PointCloud<pcl::PointXY>};
 
     input_cloud->width = sil.size();
@@ -175,14 +175,14 @@ namespace GeometryCV {
       input_cloud->points[i] = {sil[i].x, sil[i].y};
     }
 
-    pcl::KdTreeFLANN<pcl::PointXY> kdtree;
+    pcl::search::KdTree<pcl::PointXY> kdtree(false);
 
     kdtree.setInputCloud(input_cloud);
 
     return kdtree;
   }
 
-  cv::Point2f getNearestPoint(pcl::KdTree<pcl::PointXY> &template_kdtree, const cv::Point2f &pt) {
+  cv::Point2f getNearestPoint(pcl::search::KdTree<pcl::PointXY> &template_kdtree, const cv::Point2f &pt) {
     pcl::PointXY search_point = {pt.x, pt.y};
 
     std::vector<int> indices;
@@ -196,7 +196,7 @@ namespace GeometryCV {
     return cv::Point2f(out_pt.x, out_pt.y);
   }
 
-  std::tuple<cv::Mat, cv::Mat> compute2dDisparityResidualsAndWeights(const std::vector<cv::Point2f> &data, pcl::KdTree<pcl::PointXY> &template_kdtree) {
+  std::tuple<cv::Mat, cv::Mat> compute2dDisparityResidualsAndWeights(const std::vector<cv::Point2f> &data, pcl::search::KdTree<pcl::PointXY> &template_kdtree) {
     cv::Mat residuals(data.size(), 1, CV_32FC1);
     cv::Mat weights(data.size(), 1, CV_32FC1);
 
@@ -212,9 +212,9 @@ namespace GeometryCV {
     }
 
     return std::tie(residuals, weights);
-  }
+  }*/
 
-  std::vector<cv::Point2f> projectPointsShort(const std::vector<cv::Point3f> &points, const ::PoseRT &pose, const ::Camera &camera) {
+  std::vector<cv::Point2f> projectPoints(const std::vector<cv::Point3f> &points, const ::PoseRT &pose, const ::Camera &camera) {
     std::vector<cv::Point2f> points_2d;
     cv::projectPoints(points, pose.rot, pose.trans, camera.matrix, camera.distortion, points_2d);
 
@@ -265,7 +265,7 @@ namespace GeometryCV {
     return input + pose_delta;
   }
 
-  cv::Mat computeProximityJacobianForPoseRT(const ::PoseRT &pose, const std::vector<cv::Point3f> &points_3d, const float h, const std::vector<cv::Point2f> &template_2d, const cv::Mat &weights, const ::Camera &camera) {
+/*  cv::Mat computeProximityJacobianForPoseRT(const ::PoseRT &pose, const std::vector<cv::Point3f> &points_3d, const float h, const std::vector<cv::Point2f> &template_2d, const cv::Mat &weights, const ::Camera &camera) {
     size_t dof = 6;
 
     auto template_kd = getKdTree(template_2d);
@@ -275,8 +275,8 @@ namespace GeometryCV {
       ::PoseRT pose_h_plus  = offsetPose(pose, j, h);
       ::PoseRT pose_h_minus = offsetPose(pose, j, -h);
 
-      std::vector<cv::Point2f> d_plus  = projectPointsShort(points_3d, pose_h_plus, camera);
-      std::vector<cv::Point2f> d_minus = projectPointsShort(points_3d, pose_h_minus, camera);
+      std::vector<cv::Point2f> d_plus  = projectPoints(points_3d, pose_h_plus, camera);
+      std::vector<cv::Point2f> d_minus = projectPoints(points_3d, pose_h_minus, camera);
 
       #pragma omp parallel for
       for (size_t i = 0; i < d_plus.size(); ++i) {
@@ -312,7 +312,7 @@ namespace GeometryCV {
     bool done {false};
     while (!done && iterations_left) {
 
-      std::vector<cv::Point2f> sil_2d = projectPointsShort(points, current_pose, camera);
+      std::vector<cv::Point2f> sil_2d = projectPoints(points, current_pose, camera);
 
       cv::Mat residuals;
       cv::Mat weights;
@@ -372,7 +372,7 @@ namespace GeometryCV {
     }
 
     return std::tie(current_pose, last_error, jacobian);
-  }
+  }*/
 
   std::pair<double, double> getChamferDistance(std::vector<cv::Point2f> &a, std::vector<cv::Point2f> &b, cv::Size work_area, cv::Mat &dist_transform) {
     double distance_sum = 0;
@@ -404,10 +404,14 @@ namespace GeometryCV {
 
     double confidence = static_cast<double>(num_points_hit) / a.size();
 
-    if (confidence == 0)
-      throw std::runtime_error("input contour is too large or contains no points");
+    double distance;
 
-    double distance = distance_sum / num_points_hit;
+    if (confidence != 0)
+      distance = distance_sum / num_points_hit;
+    else {
+      outWarn("input contour is too large or contains no points");
+      distance = std::numeric_limits<double>::max();
+    }
 
     return std::make_pair(distance, confidence);
   }

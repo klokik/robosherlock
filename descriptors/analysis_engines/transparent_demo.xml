@@ -143,12 +143,12 @@
         </overrides>
       </configurationParameter>
       <configurationParameter>
-        <name>referenceShapes</name>
+        <name>referenceMeshes</name>
         <type>String</type>
         <multiValued>true</multiValued>
         <mandatory>true</mandatory>
         <overrides>
-          <parameter>ContourFittingClassifier/referenceShapes</parameter>
+          <parameter>ContourFittingClassifier/referenceMeshes</parameter>
         </overrides>
       </configurationParameter>
     </configurationParameters>
@@ -168,10 +168,10 @@
         </value>
       </nameValuePair>
       <nameValuePair>
-            <name>referenceShapes</name>
+            <name>referenceMeshes</name>
             <value>
                 <array>
-                    <string>/res/other/pokal.ply|/res/other/pokal_edge.ply</string>
+                    <string>/res/other/pokal.ply</string>
                     <!-- <string>/res/other/lodrat.ply</string> -->
                     <!-- <string>/res/other/godis.ply</string> -->
                     <!-- <string>/res/other/oanvand_blue.ply</string> -->

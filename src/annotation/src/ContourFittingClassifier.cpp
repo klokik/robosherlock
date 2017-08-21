@@ -16,6 +16,15 @@
 #include <rs/DrawingAnnotator.h>
 #include <rs/segmentation/ImageSegmentation.h>
 #include <rs/utils/SimilarityRanking.h>
+
+#define PCL_SEGFAULT_WORKAROUND 1
+
+#if !PCL_SEGFAULT_WORKAROUND
+#include <pcl/registration/icp.h>
+#else
+#include "libicp/src/icpPointToPoint.h"
+#endif
+
 #include <rs/utils/GeometryCV.h>
 #include <rs/utils/Drawing.h>
 
@@ -195,9 +204,11 @@ public:
     //   cv::Point(-1,-1), 1);
     // cv::Canny(footprint_img, footprint_img, 128, 128);
 
-    // this->img = footprint_img;
     this->outerEdge = contour;
     this->normOuterEdge = normalized_contour;
+
+    this->pose = pose;
+    // this->img = footprint_img;
 
     // cv::Canny(); // TODO
     // this->innerEdges
@@ -262,13 +273,14 @@ public:
   TyErrorId initialize(AnnotatorContext &ctx) override {
     outInfo("initialize");
 
+    ctx.extractValue("repairPointCloud", this->repairPointCloud);
     ctx.extractValue("rotationAxisSamples", this->rotation_axis_samples);
     ctx.extractValue("rotationAngleSamples", this->rotation_angle_samples);
     ctx.extractValue("footprintImageSize", this->footprint_image_size);
     ctx.extractValue("icp2d3dIterationsLimit", this->icp2d3dIterationsLimit);
 
     std::vector<std::string*> filenames;
-    ctx.extractValue("referenceShapes", filenames);
+    ctx.extractValue("referenceMeshes", filenames);
 
     for (auto &fname : filenames) {
       try {
@@ -279,13 +291,10 @@ public:
                                         this->rotation_angle_samples,
                                         this->footprint_image_size);
 
-
         this->edge_models.emplace(*fname, edge_model);
-
       } catch (const std::exception &ex) {
         outError(ex.what());
       }
-
       delete fname;
     }
 
@@ -372,13 +381,13 @@ public:
 
     for (auto &t_segment : t_segments) {
       rs::Segment segment = t_segment.segment.get();
-      rs::Plane plane = t_segment.supportPlane.get();
 
-      std::vector<float> planeModel = plane.model();
-      if(planeModel.size() != 4) {
+/*      rs::Plane plane = t_segment.supportPlane.get();*/
+      std::vector<float> planeModel {0, 1, 0, 1};//= plane.model();
+/*      if(planeModel.size() != 4) {
         outError("No plane found!");
         continue;
-      }
+      }*/
 
       cv::Vec3f plane_normal(planeModel[0], planeModel[1], planeModel[2]);
       double plane_distance = planeModel[3];
@@ -395,13 +404,14 @@ public:
 
       ImageSegmentation::Segment i_segment;
       rs::conversion::from(segment, i_segment);
+      this->segments.push_back(i_segment);
+      this->labels.push_back(std::string("lol") + std::to_string(1));
 
       std::vector<cv::Point2f> innerEdges = getCannyEdges(image_grayscale, i_segment.rect);
       if (innerEdges.size() == 0)
         continue;
 
       // this->surface_edges.push_back(innerEdges);
-      // this->segments.push_back(i_segment);
 
       ::SimilarityRanking<PoseHypothesis> poseRanking;
 
@@ -424,8 +434,7 @@ public:
           for (auto &pt : mesh.points)
             points_3d.push_back(pt - mesh.origin);
 
-          std::vector<cv::Point2f> points_2d;
-          cv::projectPoints(points_3d, it->pose.rot, it->pose.trans, silhouette_camera.matrix, silhouette_camera.distortion, points_2d);
+          std::vector<cv::Point2f> points_2d = GeometryCV::projectPoints(points_3d, it->pose, this->footprint_camera);
           points_2d = GeometryCV::transform(pr_trans, points_2d);
           // #pragma omp critical
           // this->fitted_silhouettes.push_back(points_2d);
@@ -445,7 +454,7 @@ public:
           hypothesis.pose = pose_3d;
 
           double distance, confidence;
-          auto trans_mesh_fp = ::MeshFootprint(mesh, pose_3d, this->camera, this->footprint_image_size);
+          auto trans_mesh_fp = ::MeshFootprint(mesh, pose_3d, this->footprint_camera, this->footprint_image_size);
           std::tie(distance, confidence) = GeometryCV::getChamferDistance(trans_mesh_fp.outerEdge, contour, cas_image_depth.size(), dist_transform);
 
           hypothesis.setScore(std::exp(-distance) * confidence);
@@ -457,7 +466,7 @@ public:
 
       poseRanking.supressNonMaximum(1);
 
-      poseRanking.filter(this->rejectScoreLevel);
+      // poseRanking.filter(this->rejectScoreLevel);
 
       if (poseRanking.size() == 0) {
         outInfo("Low probable silhouette => rejecting");
@@ -480,9 +489,9 @@ public:
 
       auto max_pr = poseRanking.normalize();
 
-      poseRanking.filter(this->normalizedAcceptScoreLevel);
+      // poseRanking.filter(this->normalizedAcceptScoreLevel);
 
-      // this->pose_hypotheses.push_back(poseRanking.getTop(1));
+      this->pose_hypotheses.push_back(poseRanking.getTop(5));
 
 /*      if (poseRanking.size() > 0) {
         auto top_hypothesis = poseRanking.getTop();
@@ -519,9 +528,15 @@ public:
         drawHypothesisToCAS(cas, cas_image_depth, view_cloud, top_hypothesis);
       }*/
 
+      outInfo("Has " << poseRanking.size() << " hypotheses for the segment");
       auto top_hypotheses = poseRanking.getTop(1);
-      if (this->repairPointCloud && (top_hypotheses.size() > 0))
+      outInfo("Top hypothesis size: " << top_hypotheses.size());
+      if (this->repairPointCloud && (top_hypotheses.size() > 0)) {
+        const auto mesh = this->edge_models[top_hypotheses[0].getClass()].mesh;
+        auto points_2d = GeometryCV::projectPoints(mesh.points, top_hypotheses[0].pose, this->camera);
+        this->fitted_silhouettes.push_back(points_2d);
         this->drawHypothesisToCAS(cas, cas_image_depth, view_cloud, top_hypotheses[0], this->camera);
+      }
 
       // cv::imwrite("/tmp/color.png", cas_image_rgb);
       // cv::imwrite("/tmp/depth.png", cas_image_depth);
@@ -560,13 +575,13 @@ protected:
 
     cv::cvtColor(gray, disp, CV_GRAY2BGR);
 
-    // ImageSegmentation::drawSegments2D(disp, this->segments, this->labels, 1, 0.5);
+    ImageSegmentation::drawSegments2D(disp, this->segments, this->labels, 1, 0.5);
 
     // return;
-/*    for (const auto &sil : this->fitted_silhouettes) {
+    for (const auto &sil : this->fitted_silhouettes) {
       for (const auto &pt : sil)
         cv::circle(disp, pt, 1, cv::Scalar(0, 0, 255), -1);
-    }*/
+    }
 
     cv::Mat transpR = cv::Mat::zeros(disp.size(), CV_8UC3);
     cv::Mat transpB = cv::Mat::zeros(disp.size(), CV_8UC3);
@@ -677,8 +692,8 @@ protected:
 
         visualizer.removeShape(pcl_mesh_name);
 
-        // auto result = visualizer.addPolygonMesh<pcl::PointXYZRGBA>(cloud, polygons, pcl_mesh_name);
-        // assert(result);
+        auto result = visualizer.addPolygonMesh<pcl::PointXYZRGBA>(cloud, polygons, pcl_mesh_name);
+        assert(result);
 
         ++i;
       }
@@ -896,7 +911,7 @@ private:
   pcl::PointCloud<pcl::PointXYZRGBA>::Ptr view_cloud {new pcl::PointCloud<pcl::PointXYZRGBA>};
 
   ::Camera camera;
-  ::Camera silhouette_camera;
+  ::Camera footprint_camera;
 };
 
 std::vector<cv::Point2f> getCannyEdges(cv::Mat &grayscale, cv::Rect &input_roi) {
