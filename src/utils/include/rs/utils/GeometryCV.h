@@ -391,6 +391,8 @@ namespace GeometryCV {
       dist_transform = cv::Mat(sil_map_b.size(), CV_32FC1, cv::Scalar(0.f));
       // cv::distanceTransform(sil_map_b(roi), dist_transform(roi), CV_DIST_L2, 3);
       cv::distanceTransform(sil_map_b, dist_transform, CV_DIST_L2, 3);
+
+      cv::imwrite("/tmp/dt.png", dist_transform);
     }
 
     auto work_rect = cv::Rect(cv::Point(0, 0), work_area);
@@ -406,6 +408,7 @@ namespace GeometryCV {
 
     double distance;
 
+    // outInfo("distance_sum " << distance_sum/num_points_hit);
     if (confidence != 0)
       distance = distance_sum / num_points_hit;
     else {

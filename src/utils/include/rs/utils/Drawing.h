@@ -3,6 +3,8 @@
 #include <rs/utils/GeometryCV.h>
 
 namespace Drawing {
+  constexpr uint16_t max_depth_u16 = std::numeric_limits<uint16_t>::max();
+
   template <typename C_t>
   void drawTriangleInterp(cv::Mat &z_buffer, cv::Mat &dst, const std::vector<cv::Point3f> &poly, const std::vector<C_t> &vals) {
     int min_x = std::max(0, (int)std::floor(std::min(std::min(poly[0].x, poly[1].x), poly[2].x)));
@@ -30,8 +32,8 @@ namespace Drawing {
         if (l1 >=0 && l2 >=0 && l3 >=0 && l1 <=1 && l2 <=1 && l3 <=1) {
           float new_depth = std::abs(poly[0].z*l1 + poly[1].z*l2 + poly[2].z*l3);
 
-          if (z_buffer.at<float>(j, i) > new_depth) {
-            z_buffer.at<float>(j, i) = new_depth;
+          if (z_buffer.at<uint16_t>(j, i) > new_depth) {
+            z_buffer.at<uint16_t>(j, i) = new_depth;
 
             if (vals.size()) {
               C_t new_val = l1*vals[0] + l2*vals[1] + l3*vals[2];
@@ -76,6 +78,7 @@ namespace Drawing {
   }
 
   void drawMeshNormals(
+      cv::Mat &dst_depth_u16,
       cv::Mat &dst_32fc3,
       const std::vector<cv::Point3f> &points,
       const std::vector<cv::Vec3f> &normals,
@@ -94,9 +97,6 @@ namespace Drawing {
     std::vector<cv::Point2f> vertice_2d;
     cv::projectPoints(vertice, cv::Vec3f(0, 0, 0), cv::Vec3f(0, 0, 0), cam, ks, vertice_2d);
 
-    cv::Mat none;
-    cv::Mat z_buffer = cv::Mat::zeros(dst_32fc3.size(), CV_32FC3);
-
     for (const auto &tri : indices) {
       std::vector<float> depth {
         vertice[tri[0]].z,
@@ -108,7 +108,7 @@ namespace Drawing {
           cv::Vec3f(vertice_2d[tri[1]].x, vertice_2d[tri[1]].y, depth[1]),
           cv::Vec3f(vertice_2d[tri[2]].x, vertice_2d[tri[2]].y, depth[2])};
 
-      drawTriangleInterp(z_buffer, dst_32fc3, poly, normals_cs);
+      drawTriangleInterp(dst_depth_u16, dst_32fc3, poly, normals_cs);
     }
   }
 }

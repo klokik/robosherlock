@@ -126,7 +126,7 @@ struct Mesh {
 };
 
 std::vector<cv::Point2f> getCannyEdges(cv::Mat &grayscale, cv::Rect &input_roi);
-void checkViewCloudLookup(const cv::Mat &cam_mat, cv::Mat &lookupX, cv::Mat &lookupY);
+void checkViewCloudLookup(const ::Camera &camera, const cv::Size size, cv::Mat &lookupX, cv::Mat &lookupY);
 
 class MeshFootprint {
 public:
@@ -416,14 +416,14 @@ public:
       ::SimilarityRanking<PoseHypothesis> poseRanking;
 
       // will be reinitialised by first chamfer distance call
-      cv::Mat dist_transform(0, 0, CV_32FC1);
+      cv::Mat dist_transform;
       GeometryCV::getChamferDistance(contour, contour, cas_image_depth.size(), dist_transform);
 
       for (const auto &kv : this->edge_models) {
         auto &mesh = kv.second.mesh;
         assert(mesh.points.size() >= 4);
 
-        #pragma omp parallel for
+        // #pragma omp parallel for
         for (auto it = kv.second.items.cbegin(); it < kv.second.items.cend(); ++it) {
           ::PoseHypothesis hypothesis(kv.first, std::distance(kv.second.items.cbegin(), it), 0);
 
@@ -457,16 +457,17 @@ public:
           auto trans_mesh_fp = ::MeshFootprint(mesh, pose_3d, this->footprint_camera, this->footprint_image_size);
           std::tie(distance, confidence) = GeometryCV::getChamferDistance(trans_mesh_fp.outerEdge, contour, cas_image_depth.size(), dist_transform);
 
-          hypothesis.setScore(std::exp(-distance) * confidence);
+          // outInfo("distance: " << distance << " confidence" << confidence);
+          hypothesis.setScore(-pr_fitness_score);//distance);//std::exp(-distance) * confidence);
 
-          #pragma omp critical
+          // #pragma omp critical
           poseRanking.addElement(hypothesis);
         }
       }
 
       poseRanking.supressNonMaximum(1);
 
-      // poseRanking.filter(this->rejectScoreLevel);
+      poseRanking.filter(this->rejectScoreLevel);
 
       if (poseRanking.size() == 0) {
         outInfo("Low probable silhouette => rejecting");
@@ -486,47 +487,43 @@ public:
         i++;
       }
       this->histograms.push_back(hist);*/
+      auto histogram = poseRanking.getHistogram();
 
       auto max_pr = poseRanking.normalize();
 
-      // poseRanking.filter(this->normalizedAcceptScoreLevel);
+      poseRanking.filter(this->normalizedAcceptScoreLevel);
 
-      this->pose_hypotheses.push_back(poseRanking.getTop(5));
+      // this->pose_hypotheses.push_back(poseRanking.getTop(5));
 
-/*      if (poseRanking.size() > 0) {
-        auto top_hypothesis = poseRanking.getTop();
-        this->labels.push_back(top_hypothesis.getClass());
+      // Refine obtained poses
 
-        outInfo("Found " << poseRanking.size() << " probable poses");
-        outInfo("\tProbably it is " << top_hypothesis.model_name << "; score: " << max_pr);
+      outInfo("Surface edges contains: " << innerEdges.size() << " points");
+      for (auto &hyp : poseRanking) {
+        ::Mesh &mesh = this->edge_models[hyp.getClass()].mesh;
 
-        outInfo("Surface edges contains: " << surface_edges.size() << " points");
-        for (auto &hyp : this->pose_hypotheses.back()) {
-          ::Mesh &surface_edge_mesh = this->edge_models[hyp.getClass()].edge_mesh;
+        getSurfaceEdgesAtPose(mesh, hyp.pose, this->camera, cas_image_depth.size());
 
-          ::PoseRT new_pose;
-          double cost = 0;
-          cv::Mat jacobian;
+        break;
 
-          outInfo("Running 2d-3d ICP ... ");
-          std::tie(new_pose, cost, jacobian) = fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera);
-          outInfo("\tdone: cost = " << cost);
-          assert(cost < 1 && cost >= 0);
+/*        ::PoseRT new_pose;
+        double cost = 0;
+        cv::Mat jacobian;
 
-          hyp.pose = new_pose;
+        outInfo("Running 2d-3d ICP ... ");
+        std::tie(new_pose, cost, jacobian) = fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera);
+        outInfo("\tdone: cost = " << cost);
+        assert(cost < 1 && cost >= 0);
 
-          // hyp.pose = alignObjectsPoseWithPlane(hyp.pose, cv::Vec3f(0, 0, 0), plane_normal, plane_distance, jacobian);
+        hyp.pose = new_pose;*/
 
-          // outInfo("Running 2d-3d ICP2 ... ");
-          // std::tie(new_pose, cost, std::ignore) = fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera/*, plane_normal);
-          // outInfo("\tdone: cost = " << cost);
+        // hyp.pose = alignObjectsPoseWithPlane(hyp.pose, cv::Vec3f(0, 0, 0), plane_normal, plane_distance, jacobian);
 
-          // hyp.pose = new_pose;
-        }
+        // outInfo("Running 2d-3d ICP2 ... ");
+        // std::tie(new_pose, cost, std::ignore) = fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera/*, plane_normal);
+        // outInfo("\tdone: cost = " << cost);
 
-        // repair using top hypothesis
-        drawHypothesisToCAS(cas, cas_image_depth, view_cloud, top_hypothesis);
-      }*/
+        // hyp.pose = new_pose;
+      }
 
       outInfo("Has " << poseRanking.size() << " hypotheses for the segment");
       auto top_hypotheses = poseRanking.getTop(1);
@@ -551,6 +548,22 @@ public:
 
 protected:
   void drawImageWithLock(cv::Mat &disp) override {
+
+/*    cv::Mat normals = (this->normal_map*0.5f + 0.5f);
+    this->normal_map = this->normal_map*0.f;
+    normals.convertTo(disp, CV_8UC3, 255);*/
+
+    cv::Mat normals_dot = (this->normal_dot_map*0.5f + 0.5f);
+    // for (int i = 0; i < 480; ++i)
+    //   for (int j = 0; j < 640; ++j)
+    //     if (this->normal_dot_map.at<float>(i, j) == 0)
+    //       normals_dot.at<float>(i, j) = 0;
+    this->normal_dot_map = this->normal_dot_map*0.f;
+    normals_dot.convertTo(normals_dot, CV_8UC3, 255);
+    cv::equalizeHist(normals_dot, normals_dot);
+    cv::Canny(normals_dot, normals_dot, 127, 128);
+    cv::cvtColor(normals_dot, disp, CV_GRAY2BGR);
+    return;
     // image_rgb.copyTo(disp);
 
     cv::Mat gray;
@@ -679,23 +692,25 @@ protected:
       visualizer.removeAllShapes();
     }
 
-    int i = 0;
-    for (const auto &seg_hyp : this->pose_hypotheses) {
-      for (const auto &hyp : seg_hyp) {
-        std::string pcl_mesh_name = "_" + std::to_string(i);
-        pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloud;
-        std::vector<pcl::Vertices> polygons;
+    if (this->visualizeSolidMeshes) {
+      int i = 0;
+      for (const auto &seg_hyp : this->pose_hypotheses) {
+        for (const auto &hyp : seg_hyp) {
+          std::string pcl_mesh_name = "_" + std::to_string(i);
+          pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloud;
+          std::vector<pcl::Vertices> polygons;
 
-        cv::Mat affine_3d_transform = GeometryCV::poseRTToAffine(hyp.pose);
-        std::tie(cloud, polygons) = meshToPCLMesh(this->edge_models[hyp.getClass()].mesh,
-                                                  affine_3d_transform, (hyp.getScore() - 0.85) / 0.15);
+          cv::Mat affine_3d_transform = GeometryCV::poseRTToAffine(hyp.pose);
+          std::tie(cloud, polygons) = meshToPCLMesh(this->edge_models[hyp.getClass()].mesh,
+                                                    affine_3d_transform, (hyp.getScore() - 0.85) / 0.15);
 
-        visualizer.removeShape(pcl_mesh_name);
+          visualizer.removeShape(pcl_mesh_name);
 
-        auto result = visualizer.addPolygonMesh<pcl::PointXYZRGBA>(cloud, polygons, pcl_mesh_name);
-        assert(result);
+          auto result = visualizer.addPolygonMesh<pcl::PointXYZRGBA>(cloud, polygons, pcl_mesh_name);
+          assert(result);
 
-        ++i;
+          ++i;
+        }
       }
     }
   }
@@ -752,28 +767,20 @@ protected:
   }
 
   void drawHypothesisToCAS(rs::SceneCas &cas, cv::Mat &cas_image_depth, pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cas_view_cloud, ::PoseHypothesis &hypothesis, const ::Camera &camera) {
-    cv::Mat cam_sp_transform = GeometryCV::poseRTToAffine(hypothesis.pose);
-
     auto &mesh = this->edge_models[hypothesis.getClass()].mesh;
 
-    std::vector<cv::Point3f> vertice = GeometryCV::transform(cam_sp_transform, mesh.points);
+    cv::Mat depth_map = cv::Mat::ones(cas_image_depth.size(), CV_16UC1) * Drawing::max_depth_u16;
+    Drawing::drawMeshDepth(depth_map, mesh.points, mesh.triangles, hypothesis.pose.rot, hypothesis.pose.trans, camera.matrix, camera.distortion);
 
-    std::vector<cv::Point2f> vertice_2d;
-    cv::projectPoints(vertice, cv::Vec3f(0, 0, 0), cv::Vec3f(0, 0, 0), camera.matrix, camera.distortion, vertice_2d);
+    depth_map.copyTo(cas_image_depth, (depth_map != Drawing::max_depth_u16));
 
-    uint16_t max_depth = 65535u;
-    cv::Mat depth_map = cv::Mat::ones(cas_image_depth.size(), CV_16UC1) * max_depth;
+    checkViewCloudLookup(camera, depth_map.size(), this->lookupX, this->lookupY);
 
-    Drawing::drawMeshDepth(depth_map, vertice, mesh.triangles, hypothesis.pose.rot, hypothesis.pose.trans, camera.matrix, camera.distortion);
-
-    depth_map.copyTo(cas_image_depth, (depth_map != max_depth));
-
-    checkViewCloudLookup(camera.matrix, this->lookupX, this->lookupY);
-
+    int counter = 0;
     for (int i = 0; i < cas_view_cloud->width; ++i) {
       for (int j = 0; j < cas_view_cloud->height; ++j) {
         int id = j*cas_view_cloud->width + i;
-        if (depth_map.at<uint16_t>(j, i) != max_depth) {
+        if (depth_map.at<uint16_t>(j, i) != Drawing::max_depth_u16) {
           float depth_value = cas_image_depth.at<uint16_t>(j, i) / 1000.f;
 
           cas_view_cloud->points[id].x = depth_value * this->lookupX.at<float>(i);
@@ -786,9 +793,13 @@ protected:
           cas_view_cloud->points[id].g = rgb(1);
           cas_view_cloud->points[id].b = rgb(2);
           cas_view_cloud->points[id].a = 255;
+
+          ++counter;
         }
       }
     }
+
+    outInfo("PC updated with " << counter << " points");
 
     cas.set(VIEW_DEPTH_IMAGE, cas_image_depth);
     cas.set(VIEW_CLOUD, *cas_view_cloud);
@@ -878,6 +889,28 @@ protected:
     return aligned_to_plane_objects_pose;
   }
 
+  /*::Mesh*/void getSurfaceEdgesAtPose(const ::Mesh &mesh, const ::PoseRT &pose, const ::Camera &camera, const cv::Size image_size) {
+    cv::Mat z_buffer = cv::Mat::ones(image_size, CV_16UC1) * Drawing::max_depth_u16;
+    cv::Mat normal_map = cv::Mat::zeros(image_size, CV_32FC3);
+
+    Drawing::drawMeshNormals(z_buffer, normal_map, mesh.points, mesh.normals, mesh.triangles,
+        pose.rot, pose.trans, camera.matrix, camera.distortion);
+
+    // cv::Canny(normal_map, normal_map);
+
+    cv::Vec3f cam_vec(0, 0, -1);
+    for (int i = 0; i < image_size.height; ++i)
+      for (int j = 0; j < image_size.width; ++j) {
+        // if (normal_map.at<Vec3f>()
+        this->normal_dot_map.at<float>(i, j) += cam_vec.dot(normal_map.at<cv::Vec3f>(i, j));
+      }
+
+
+    this->normal_map += normal_map;
+
+    // return {};
+  }
+
 private:
   std::string cache_path{"/tmp"};
   int rotation_axis_samples{10};
@@ -888,6 +921,7 @@ private:
   double normalizedAcceptScoreLevel = 0.9;
   // size_t maxICPHypothesesNum = 10;
   bool repairPointCloud = false;
+  bool visualizeSolidMeshes{false};
 
   int icp2d3dIterationsLimit {100};
 
@@ -905,6 +939,8 @@ private:
 
   cv::Mat image_rgb;
   cv::Mat distance_mat = cv::Mat(480, 640, CV_16UC1);
+  cv::Mat normal_map = cv::Mat::zeros(480, 640, CV_32FC3);
+  cv::Mat normal_dot_map = cv::Mat::zeros(480, 640, CV_32FC1);
 
   cv::Mat lookupX;
   cv::Mat lookupY;
@@ -945,30 +981,27 @@ std::vector<cv::Point2f> getCannyEdges(cv::Mat &grayscale, cv::Rect &input_roi) 
   return result;
 }
 
-void checkViewCloudLookup(const cv::Mat &cam_mat, cv::Mat &lookupX, cv::Mat &lookupY)
+void checkViewCloudLookup(const ::Camera &camera, const cv::Size size, cv::Mat &lookupX, cv::Mat &lookupY)
 {
   if (!lookupX.empty() && !lookupY.empty())
     return;
 
-  const float fx = 1.0f / cam_mat.at<double>(0, 0);
-  const float fy = 1.0f / cam_mat.at<double>(1, 1);
-  const float cx = cam_mat.at<double>(0, 2);
-  const float cy = cam_mat.at<double>(1, 2);
+  const float fx = 1.0f / camera.matrix.at<float>(0, 0);
+  const float fy = 1.0f / camera.matrix.at<float>(1, 1);
+  const float cx = camera.matrix.at<float>(0, 2);
+  const float cy = camera.matrix.at<float>(1, 2);
   float *it;
 
-  size_t height = 480;
-  size_t width = 640;
-
-  lookupY = cv::Mat(1, height, CV_32F);
+  lookupY = cv::Mat(1, size.height, CV_32F);
   it = lookupY.ptr<float>();
-  for(size_t r = 0; r < height; ++r, ++it)
+  for(size_t r = 0; r < size.height; ++r, ++it)
   {
     *it = (r - cy) * fy;
   }
 
-  lookupX = cv::Mat(1, width, CV_32F);
+  lookupX = cv::Mat(1, size.width, CV_32F);
   it = lookupX.ptr<float>();
-  for(size_t c = 0; c < width; ++c, ++it)
+  for(size_t c = 0; c < size.width; ++c, ++it)
   {
     *it = (c - cx) * fx;
   }

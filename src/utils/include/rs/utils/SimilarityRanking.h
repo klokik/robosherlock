@@ -132,20 +132,32 @@ class SimilarityRanking {
     }
   }
 
-  public: std::vector<float> getHistogram() const {
-    throw std::runtime_error("not implemented");
+  public: std::vector<float> getHistogram() {
+    std::vector<float> result;
+    for (auto sample_it = this->begin() ; sample_it != this->end(); ++sample_it)
+      result.push_back(sample_it->getScore());
+
+    return result;
   }
 
   public: class Iterator : public std::iterator<std::forward_iterator_tag, RankingItem_t> {
     public: typename Container_t::iterator class_it;
     public: typename Container_t::mapped_type::iterator sample_it;
 
+    public: Iterator() = default;
+
+    public: Iterator(decltype(class_it) c_it, decltype(sample_it) s_it):
+        class_it(c_it), sample_it(s_it) {
+    }
+
     public: Iterator &operator ++ () {
-      if (this->sample_it != this->class_it->end())
+      if (this->sample_it != this->class_it->second.end())
         ++(this->sample_it);
       else {
-        this->sample_it = (++this->class_it)->begin();
+        this->sample_it = (++this->class_it)->second.begin();
       }
+
+      return *this;
     }
 
     public: Iterator operator ++ (int) {
@@ -156,7 +168,7 @@ class SimilarityRanking {
     }
 
     public: bool operator == (Iterator it) const {
-      return (this->class_it == it.class_it && this->sample_it == it->sample_it);
+      return (this->class_it == it.class_it && this->sample_it == it.sample_it);
     }
 
     public: bool operator != (Iterator it) const {
@@ -166,18 +178,26 @@ class SimilarityRanking {
     RankingItem_t &operator * () const {
       return *sample_it;
     }
+
+    RankingItem_t *operator -> () const {
+      return &*sample_it;
+    }
   };
 
   public: Iterator begin() {
     assert(!this->items.empty());
 
-    return {this->items.begin(), this->items.begin()->begin()};
+    return Iterator{this->items.begin(), this->items.begin()->second.begin()};
   }
 
   public: Iterator end() {
     assert(!this->items.empty());
 
-    return {this->items.end(), this->items.end()->end()};
+    Iterator it;
+    it.class_it = std::prev(this->items.end());
+    it.sample_it = it.class_it->second.end();
+
+    return it;
   }
 
   private: double getMaxScore() {
