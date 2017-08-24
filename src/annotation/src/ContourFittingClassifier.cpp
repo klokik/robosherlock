@@ -17,16 +17,6 @@
 #include <rs/segmentation/ImageSegmentation.h>
 #include <rs/utils/SimilarityRanking.h>
 
-/*#define PCL_SEGFAULT_WORKAROUND 1
-
-#if !PCL_SEGFAULT_WORKAROUND
-#include <pcl/registration/icp.h>
-#else
-#include "libicp/src/icpPointToPoint.h"
-#endif*/
-
-#include <pcl/pcl_config.h>
-
 #include <rs/utils/GeometryCV.h>
 #include <rs/utils/Drawing.h>
 
@@ -274,8 +264,6 @@ public:
 
   TyErrorId initialize(AnnotatorContext &ctx) override {
     outInfo("initialize");
-
-    outInfo("PCL Version: " << PCL_VERSION);
 
     ctx.extractValue("repairPointCloud", this->repairPointCloud);
     ctx.extractValue("rotationAxisSamples", this->rotation_axis_samples);

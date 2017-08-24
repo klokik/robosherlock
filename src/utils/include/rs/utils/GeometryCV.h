@@ -1,17 +1,8 @@
 #pragma once
 
 #include <pcl/point_types.h>
-#include <pcl/search/kdtree.h>
-
-
-#define PCL_SEGFAULT_WORKAROUND 0
-
-#if !PCL_SEGFAULT_WORKAROUND
 #include <pcl/registration/icp.h>
-#else
-#include "libicp/src/icpPointToPoint.h"
-#endif
-
+#include <pcl/search/kdtree.h>
 
 
 struct PoseRT {
@@ -442,7 +433,6 @@ namespace GeometryCV {
     return result;
   }
 
-#if !PCL_SEGFAULT_WORKAROUND
   void vectorToPointCloud(const std::vector<cv::Point2f> &points, pcl::PointCloud<pcl::PointXYZ> &pc) {
     pc.width = points.size();
     pc.height = 1;
@@ -455,7 +445,7 @@ namespace GeometryCV {
     }
   }
 
-  void PointCloudToVector(pcl::PointCloud<pcl::PointXYZ> &pc, std::vector<cv::Point2f> &points) {
+  void pointCloudToVector(pcl::PointCloud<pcl::PointXYZ> &pc, std::vector<cv::Point2f> &points) {
     points.clear();
 
     assert(pc.height == 1);
@@ -500,46 +490,6 @@ namespace GeometryCV {
 
     return {cv_trf, score};
   }
-
-#else
-
-  std::pair<cv::Mat, double> fitICP(const std::vector<cv::Point2f> &test, const std::vector<cv::Point2f> &model) {
-
-    std::vector<double> test_arr;
-    std::vector<double> model_arr;
-
-    for (const auto &pt : test) {
-      test_arr.push_back(pt.x);
-      test_arr.push_back(pt.y);
-    }
-
-    for (const auto &pt : model) {
-      model_arr.push_back(pt.x);
-      model_arr.push_back(pt.y);
-    }
-
-    int dim = 2; // 2D
-
-    Matrix rot = Matrix::eye(2); // libipc matrix
-    Matrix trans(2,1);           // libipc matrix
-
-    IcpPointToPoint icp(&test_arr[0], test.size(), dim);
-    double score = icp.fit(&model_arr[0], model.size(), rot, trans, -1);
-
-    cv::Mat cv_trf(3, 3, CV_32FC1, cv::Scalar(0.f));
-    cv_trf.at<float>(0, 0) = rot.val[0][0];
-    cv_trf.at<float>(0, 1) = rot.val[1][0];
-    cv_trf.at<float>(1, 0) = rot.val[0][1];
-    cv_trf.at<float>(1, 1) = rot.val[1][1];
-
-    // assume that translation is small enough
-    cv_trf.at<float>(0, 2) = 0; //trans.val[0][0];
-    cv_trf.at<float>(1, 2) = 0; //trans.val[1][0];
-    cv_trf.at<float>(2, 2) = 1.f;
-
-    return {cv_trf, score};
-  }
-#endif
 
   std::pair<cv::Vec2f, float> getMeanAndStdDev(const std::vector<cv::Point2f> &sil) {
     cv::Point2f mean = std::accumulate(sil.cbegin(), sil.cend(), cv::Point2f());
