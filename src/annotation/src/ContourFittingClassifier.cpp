@@ -17,13 +17,15 @@
 #include <rs/segmentation/ImageSegmentation.h>
 #include <rs/utils/SimilarityRanking.h>
 
-#define PCL_SEGFAULT_WORKAROUND 1
+/*#define PCL_SEGFAULT_WORKAROUND 1
 
 #if !PCL_SEGFAULT_WORKAROUND
 #include <pcl/registration/icp.h>
 #else
 #include "libicp/src/icpPointToPoint.h"
-#endif
+#endif*/
+
+#include <pcl/pcl_config.h>
 
 #include <rs/utils/GeometryCV.h>
 #include <rs/utils/Drawing.h>
@@ -67,7 +69,7 @@ struct Mesh {
           counts[PLYSection::VERTEX] = std::atoi(line.substr(line.rfind(" ")).c_str());
         if (line.find("end_header") == 0) {
           cur_section = PLYSection::VERTEX;
-          outInfo("Vertices/normals: " << counts[PLYSection::VERTEX]);
+          outInfo("Vertices / normals: " << counts[PLYSection::VERTEX]);
           outInfo("Faces: " << counts[PLYSection::FACE]);
         }
       }
@@ -273,6 +275,8 @@ public:
   TyErrorId initialize(AnnotatorContext &ctx) override {
     outInfo("initialize");
 
+    outInfo("PCL Version: " << PCL_VERSION);
+
     ctx.extractValue("repairPointCloud", this->repairPointCloud);
     ctx.extractValue("rotationAxisSamples", this->rotation_axis_samples);
     ctx.extractValue("rotationAngleSamples", this->rotation_angle_samples);
@@ -363,11 +367,11 @@ public:
       return UIMA_ERR_NONE;
     }*/
 
-    cv::Vec3f plane_normal;
-    plane_normal[0] = 0.f;//model[0];
-    plane_normal[1] = 1.f;//model[1];
-    plane_normal[2] = 0.f;//model[2];
-    double plane_distance = 3;//model[3];
+    // cv::Vec3f plane_normal;
+    // plane_normal[0] = 0.f;//model[0];
+    // plane_normal[1] = 1.f;//model[1];
+    // plane_normal[2] = 0.f;//model[2];
+    // double plane_distance = 3;//model[3];
 
     outInfo("Found " << t_segments.size() << " transparent segments");
 
@@ -382,12 +386,12 @@ public:
     for (auto &t_segment : t_segments) {
       rs::Segment segment = t_segment.segment.get();
 
-/*      rs::Plane plane = t_segment.supportPlane.get();*/
-      std::vector<float> planeModel {0, 1, 0, 1};//= plane.model();
-/*      if(planeModel.size() != 4) {
+      rs::Plane plane = t_segment.supportPlane.get();
+      std::vector<float> planeModel = plane.model();
+      if(planeModel.size() != 4) {
         outError("No plane found!");
         continue;
-      }*/
+      }
 
       cv::Vec3f plane_normal(planeModel[0], planeModel[1], planeModel[2]);
       double plane_distance = planeModel[3];
@@ -499,24 +503,22 @@ public:
 
       outInfo("Surface edges contains: " << innerEdges.size() << " points");
       for (auto &hyp : poseRanking) {
-        ::Mesh &mesh = this->edge_models[hyp.getClass()].mesh;
+        // ::Mesh &mesh = this->edge_models[hyp.getClass()].mesh;
 
-        getSurfaceEdgesAtPose(mesh, hyp.pose, this->camera, cas_image_depth.size());
+        // auto points_3d = getMeshSurfaceEdgesAtPose(mesh, hyp.pose, this->camera, cas_image_depth.size());
 
-        break;
-
-/*        ::PoseRT new_pose;
-        double cost = 0;
+        // ::PoseRT new_pose;
+        // double cost = 0;
         cv::Mat jacobian;
 
-        outInfo("Running 2d-3d ICP ... ");
-        std::tie(new_pose, cost, jacobian) = fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera);
-        outInfo("\tdone: cost = " << cost);
-        assert(cost < 1 && cost >= 0);
+        // outInfo("Running 2d-3d ICP ... ");
+        // std::tie(new_pose, cost, jacobian) = fit2d3d(points3d, hyp.pose, innerEdges, this->camera);
+        // outInfo("\tdone: cost = " << cost);
+        // assert(cost < 1 && cost >= 0);
 
-        hyp.pose = new_pose;*/
+        // hyp.pose = new_pose;
 
-        // hyp.pose = alignObjectsPoseWithPlane(hyp.pose, cv::Vec3f(0, 0, 0), plane_normal, plane_distance, jacobian);
+        hyp.pose = alignObjectsPoseWithPlane(hyp.pose, cv::Vec3f(0, 0, 0), plane_normal, plane_distance, jacobian);
 
         // outInfo("Running 2d-3d ICP2 ... ");
         // std::tie(new_pose, cost, std::ignore) = fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera/*, plane_normal);
@@ -548,22 +550,13 @@ public:
 
 protected:
   void drawImageWithLock(cv::Mat &disp) override {
-
-/*    cv::Mat normals = (this->normal_map*0.5f + 0.5f);
-    this->normal_map = this->normal_map*0.f;
-    normals.convertTo(disp, CV_8UC3, 255);*/
-
-    cv::Mat normals_dot = (this->normal_dot_map*0.5f + 0.5f);
-    // for (int i = 0; i < 480; ++i)
-    //   for (int j = 0; j < 640; ++j)
-    //     if (this->normal_dot_map.at<float>(i, j) == 0)
-    //       normals_dot.at<float>(i, j) = 0;
-    this->normal_dot_map = this->normal_dot_map*0.f;
-    normals_dot.convertTo(normals_dot, CV_8UC3, 255);
-    cv::equalizeHist(normals_dot, normals_dot);
-    cv::Canny(normals_dot, normals_dot, 127, 128);
+/*    cv::Mat normals_dot;
+    cv::normalize(this->normal_dot_map, normals_dot, 0, 1, cv::NORM_MINMAX);
+    normals_dot.convertTo(normals_dot, CV_8UC1, 255);
+    cv::Canny(normals_dot, normals_dot, 60, 128);
     cv::cvtColor(normals_dot, disp, CV_GRAY2BGR);
-    return;
+    this->normal_dot_map = this->normal_dot_map*0.f;
+    return;*/
     // image_rgb.copyTo(disp);
 
     cv::Mat gray;
@@ -769,10 +762,12 @@ protected:
   void drawHypothesisToCAS(rs::SceneCas &cas, cv::Mat &cas_image_depth, pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cas_view_cloud, ::PoseHypothesis &hypothesis, const ::Camera &camera) {
     auto &mesh = this->edge_models[hypothesis.getClass()].mesh;
 
-    cv::Mat depth_map = cv::Mat::ones(cas_image_depth.size(), CV_16UC1) * Drawing::max_depth_u16;
+    cv::Mat depth_map = cv::Mat::ones(cas_image_depth.size(), CV_32FC1) * Drawing::max_depth_32f;
     Drawing::drawMeshDepth(depth_map, mesh.points, mesh.triangles, hypothesis.pose.rot, hypothesis.pose.trans, camera.matrix, camera.distortion);
 
-    depth_map.copyTo(cas_image_depth, (depth_map != Drawing::max_depth_u16));
+    cv::Mat depth_u16;
+    depth_map.convertTo(depth_u16, CV_16UC1, 1000);
+    depth_u16.copyTo(cas_image_depth, (depth_map != Drawing::max_depth_32f));
 
     checkViewCloudLookup(camera, depth_map.size(), this->lookupX, this->lookupY);
 
@@ -780,8 +775,8 @@ protected:
     for (int i = 0; i < cas_view_cloud->width; ++i) {
       for (int j = 0; j < cas_view_cloud->height; ++j) {
         int id = j*cas_view_cloud->width + i;
-        if (depth_map.at<uint16_t>(j, i) != Drawing::max_depth_u16) {
-          float depth_value = cas_image_depth.at<uint16_t>(j, i) / 1000.f;
+        if (depth_map.at<float>(j, i) != Drawing::max_depth_32f) {
+          float depth_value = depth_map.at<float>(j, i);
 
           cas_view_cloud->points[id].x = depth_value * this->lookupX.at<float>(i);
           cas_view_cloud->points[id].y = depth_value * this->lookupY.at<float>(j);
@@ -837,8 +832,15 @@ protected:
 
     ::PoseRT aligned_to_plane_objects_pose;
 
-#undef LOCAL_AMBIGUITY_RESOLUTION 
-#if defined(LOCAL_AMBIGUITY_RESOLUTION)
+#define LOCAL_AMBIGUITY_RESOLUTION 0
+#if LOCAL_AMBIGUITY_RESOLUTION
+    if (jacobian.empty()) {
+      outError("Jacobian is empty, returning original pose");
+      return initial_pose;
+    }
+
+    using namespace GeometryCV;
+
     cv::Mat E = (cv::Mat_<double>(4, 6) <<
       0, 0, 0, support_plane_normal(0), support_plane_normal(1), support_plane_normal(2),
       0, 0, 0, 0, 0, 0,
@@ -853,7 +855,10 @@ protected:
       rodrigues_up_to_n(1),
       rodrigues_up_to_n(2));
 
-    cv::Mat Q = jacobian.t() * jacobian;
+    cv::Mat jacobian_d;
+    jacobian.convertTo(jacobian_d, CV_64FC1);
+
+    cv::Mat Q = jacobian_d.t() * jacobian_d;
 
     cv::Mat A = cv::Mat::eye(10, 10, CV_64FC1);
     Q.copyTo(A(cv::Rect(0, 0, 6, 6)));
@@ -869,10 +874,14 @@ protected:
     outInfo("Support plane pose delta: " << x.t());
 
     ::PoseRT align_to_plane_objects_pose {
-      {x.at<double>(0), x.at<double>(1), x.at<double>(2)},
-      {x.at<double>(3), x.at<double>(4), x.at<double>(5)}};
+      cv::Vec3f{static_cast<float>(x.at<double>(0)),
+                static_cast<float>(x.at<double>(1)),
+                static_cast<float>(x.at<double>(2))},
+      cv::Vec3f{static_cast<float>(x.at<double>(3)),
+                static_cast<float>(x.at<double>(4)),
+                static_cast<float>(x.at<double>(5))}};
 
-    aligned_to_plane_objects_pose = initial_pose + align_to_plane_objects_pose
+    aligned_to_plane_objects_pose = initial_pose + align_to_plane_objects_pose;
 #else
     cv::Mat up_to_n_rotation;
     cv::Rodrigues(rodrigues_up_to_n, up_to_n_rotation);
@@ -889,26 +898,47 @@ protected:
     return aligned_to_plane_objects_pose;
   }
 
-  /*::Mesh*/void getSurfaceEdgesAtPose(const ::Mesh &mesh, const ::PoseRT &pose, const ::Camera &camera, const cv::Size image_size) {
-    cv::Mat z_buffer = cv::Mat::ones(image_size, CV_16UC1) * Drawing::max_depth_u16;
+  std::vector<cv::Point3f> getMeshSurfaceEdgesAtPose(const ::Mesh &mesh, const ::PoseRT &pose, const ::Camera &camera, const cv::Size image_size) {
+    cv::Mat z_buffer = cv::Mat::ones(image_size, CV_32FC1) * (float)Drawing::max_depth_32f;
     cv::Mat normal_map = cv::Mat::zeros(image_size, CV_32FC3);
 
     Drawing::drawMeshNormals(z_buffer, normal_map, mesh.points, mesh.normals, mesh.triangles,
         pose.rot, pose.trans, camera.matrix, camera.distortion);
 
-    // cv::Canny(normal_map, normal_map);
+    cv::Mat dot_map = cv::Mat::zeros(normal_map.size(), CV_32FC1);
 
     cv::Vec3f cam_vec(0, 0, -1);
     for (int i = 0; i < image_size.height; ++i)
       for (int j = 0; j < image_size.width; ++j) {
-        // if (normal_map.at<Vec3f>()
-        this->normal_dot_map.at<float>(i, j) += cam_vec.dot(normal_map.at<cv::Vec3f>(i, j));
+        float val = cam_vec.dot(normal_map.at<cv::Vec3f>(i, j));
+        dot_map.at<float>(i, j) = val;
       }
 
+    cv::normalize(dot_map, dot_map, 0, 1, cv::NORM_MINMAX);
+    dot_map.convertTo(dot_map, CV_8UC1, 255);
+    cv::Canny(dot_map, dot_map, 60, 128);
 
-    this->normal_map += normal_map;
+    // this->normal_map += normal_map;
 
-    // return {};
+    std::vector<cv::Point3f> result;
+
+    checkViewCloudLookup(camera, image_size, this->lookupX, this->lookupY);
+
+    for (int i = 0; i < image_size.height; ++i)
+      for (int j = 0; j < image_size.width; ++j) {
+        if (dot_map.at<uint8_t>(i, j) == 255) {
+          cv::Point3f pt3;
+
+          pt3.x = this->lookupX.at<float>(j);
+          pt3.y = this->lookupY.at<float>(i);
+
+          pt3.z = z_buffer.at<float>(i, j);
+
+          result.push_back(pt3);
+        }
+      }
+
+    return result;
   }
 
 private:

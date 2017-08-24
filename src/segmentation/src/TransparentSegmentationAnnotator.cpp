@@ -127,6 +127,7 @@ public:
         tSegment.segment.set(rs::conversion::to(tcas, segment));
         tSegment.maxSurfaceDepth.set(0); // TODO: get valid max surf depth
         tSegment.source.set("TransparentSegmentation");
+        tSegment.supportPlane.set(plane);
 
         scene.identifiables.append(tSegment);
       }

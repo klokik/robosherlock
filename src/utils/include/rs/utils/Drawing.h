@@ -3,7 +3,8 @@
 #include <rs/utils/GeometryCV.h>
 
 namespace Drawing {
-  constexpr uint16_t max_depth_u16 = std::numeric_limits<uint16_t>::max();
+  constexpr uint16_t max_depth_16u = std::numeric_limits<uint16_t>::max();
+  constexpr float max_depth_32f = std::numeric_limits<float>::max();
 
   template <typename C_t>
   void drawTriangleInterp(cv::Mat &z_buffer, cv::Mat &dst, const std::vector<cv::Point3f> &poly, const std::vector<C_t> &vals) {
@@ -32,8 +33,8 @@ namespace Drawing {
         if (l1 >=0 && l2 >=0 && l3 >=0 && l1 <=1 && l2 <=1 && l3 <=1) {
           float new_depth = std::abs(poly[0].z*l1 + poly[1].z*l2 + poly[2].z*l3);
 
-          if (z_buffer.at<uint16_t>(j, i) > new_depth) {
-            z_buffer.at<uint16_t>(j, i) = new_depth;
+          if (z_buffer.at<float>(j, i) > new_depth) {
+            z_buffer.at<float>(j, i) = new_depth;
 
             if (vals.size()) {
               C_t new_val = l1*vals[0] + l2*vals[1] + l3*vals[2];
@@ -45,7 +46,7 @@ namespace Drawing {
   }
 
   void drawMeshDepth(
-      cv::Mat &dst_u16,
+      cv::Mat &dst_32fc1,
       const std::vector<cv::Point3f> &points,
       const std::vector<std::vector<int>> &indices,
       const cv::Vec3f rot,
@@ -64,21 +65,21 @@ namespace Drawing {
 
     for (const auto &tri : indices) {
       std::vector<float> depth {
-        vertice[tri[0]].z * 1000,
-        vertice[tri[1]].z * 1000,
-        vertice[tri[2]].z * 1000};
+        vertice[tri[0]].z,
+        vertice[tri[1]].z,
+        vertice[tri[2]].z};
 
       std::vector<cv::Point3f> poly{
           cv::Vec3f(vertice_2d[tri[0]].x, vertice_2d[tri[0]].y, depth[0]),
           cv::Vec3f(vertice_2d[tri[1]].x, vertice_2d[tri[1]].y, depth[1]),
           cv::Vec3f(vertice_2d[tri[2]].x, vertice_2d[tri[2]].y, depth[2])};
 
-      drawTriangleInterp(dst_u16, none, poly, vals);
+      drawTriangleInterp(dst_32fc1, none, poly, vals);
     }
   }
 
   void drawMeshNormals(
-      cv::Mat &dst_depth_u16,
+      cv::Mat &dst_depth_32fc1,
       cv::Mat &dst_32fc3,
       const std::vector<cv::Point3f> &points,
       const std::vector<cv::Vec3f> &normals,
@@ -103,12 +104,17 @@ namespace Drawing {
         vertice[tri[1]].z,
         vertice[tri[2]].z};
 
+      std::vector<cv::Vec3f> norms {
+        normals_cs[tri[0]],
+        normals_cs[tri[1]],
+        normals_cs[tri[2]]};
+
       std::vector<cv::Point3f> poly{
           cv::Vec3f(vertice_2d[tri[0]].x, vertice_2d[tri[0]].y, depth[0]),
           cv::Vec3f(vertice_2d[tri[1]].x, vertice_2d[tri[1]].y, depth[1]),
           cv::Vec3f(vertice_2d[tri[2]].x, vertice_2d[tri[2]].y, depth[2])};
 
-      drawTriangleInterp(dst_depth_u16, dst_32fc3, poly, normals_cs);
+      drawTriangleInterp(dst_depth_32fc1, dst_32fc3, poly, norms);
     }
   }
 }

@@ -1,16 +1,16 @@
 #pragma once
 
 #include <pcl/point_types.h>
-// #include <pcl/search/kdtree.h>
+#include <pcl/search/kdtree.h>
 
 
-/*#define PCL_SEGFAULT_WORKAROUND 0
+#define PCL_SEGFAULT_WORKAROUND 0
 
 #if !PCL_SEGFAULT_WORKAROUND
 #include <pcl/registration/icp.h>
 #else
 #include "libicp/src/icpPointToPoint.h"
-#endif*/
+#endif
 
 
 
@@ -162,7 +162,7 @@ namespace GeometryCV {
     return b_rect;
   }
 
-/*  pcl::search::KdTree<pcl::PointXY> getKdTree(const std::vector<cv::Point2f> &sil) {
+  pcl::search::KdTree<pcl::PointXY> getKdTree(const std::vector<cv::Point2f> &sil) {
     pcl::PointCloud<pcl::PointXY>::Ptr input_cloud {new pcl::PointCloud<pcl::PointXY>};
 
     input_cloud->width = sil.size();
@@ -212,7 +212,7 @@ namespace GeometryCV {
     }
 
     return std::tie(residuals, weights);
-  }*/
+  }
 
   std::vector<cv::Point2f> projectPoints(const std::vector<cv::Point3f> &points, const ::PoseRT &pose, const ::Camera &camera) {
     std::vector<cv::Point2f> points_2d;
@@ -265,7 +265,7 @@ namespace GeometryCV {
     return input + pose_delta;
   }
 
-/*  cv::Mat computeProximityJacobianForPoseRT(const ::PoseRT &pose, const std::vector<cv::Point3f> &points_3d, const float h, const std::vector<cv::Point2f> &template_2d, const cv::Mat &weights, const ::Camera &camera) {
+  cv::Mat computeProximityJacobianForPoseRT(const ::PoseRT &pose, const std::vector<cv::Point3f> &points_3d, const float h, const std::vector<cv::Point2f> &template_2d, const cv::Mat &weights, const ::Camera &camera) {
     size_t dof = 6;
 
     auto template_kd = getKdTree(template_2d);
@@ -372,7 +372,7 @@ namespace GeometryCV {
     }
 
     return std::tie(current_pose, last_error, jacobian);
-  }*/
+  }
 
   std::pair<double, double> getChamferDistance(std::vector<cv::Point2f> &a, std::vector<cv::Point2f> &b, cv::Size work_area, cv::Mat &dist_transform) {
     double distance_sum = 0;
