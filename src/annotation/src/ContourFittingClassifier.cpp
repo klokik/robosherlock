@@ -128,8 +128,6 @@ public:
 
   ::PoseRT pose;
 
-  // cv::Mat img;
-
   MeshFootprint(const ::Mesh &mesh, const ::PoseRT &pose,
       ::Camera &camera, const int im_size) {
     std::vector<cv::Point3f> points3d;
@@ -191,16 +189,10 @@ public:
     std::vector<cv::Point2f> contour = GeometryCV::transform(bounding_matrix_inv, contours[0]);
     std::vector<cv::Point2f> normalized_contour = GeometryCV::normalizePoints(contour);
 
-    // cv::Mat mkernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3));
-    // cv::morphologyEx(footprint_img, footprint_img, cv::MORPH_GRADIENT, mkernel,
-    //   cv::Point(-1,-1), 1);
-    // cv::Canny(footprint_img, footprint_img, 128, 128);
-
     this->outerEdge = contour;
     this->normOuterEdge = normalized_contour;
 
     this->pose = pose;
-    // this->img = footprint_img;
 
     // cv::Canny(); // TODO
     // this->innerEdges
@@ -341,28 +333,6 @@ public:
     outInfo("Found " << t_segments.size() << " transparent segments");
 #endif
 
-/*    std::vector<rs::Plane> planes;
-    scene.annotations.filter(planes);
-
-    if(planes.empty())
-      return UIMA_ERR_ANNOTATOR_MISSING_INFO;
-
-    rs::Plane &plane = planes[0];
-    std::vector<float> model = plane.model();
-
-    if(model.empty() || model.size() != 4) {
-      outError("No plane found!");
-      return UIMA_ERR_NONE;
-    }*/
-
-    // cv::Vec3f plane_normal;
-    // plane_normal[0] = 0.f;//model[0];
-    // plane_normal[1] = 1.f;//model[1];
-    // plane_normal[2] = 0.f;//model[2];
-    // double plane_distance = 3;//model[3];
-
-    outInfo("Found " << t_segments.size() << " transparent segments");
-
     this->segments.clear();
     this->fitted_silhouettes.clear();
     this->surface_edges.clear();
@@ -488,7 +458,6 @@ public:
       // this->pose_hypotheses.push_back(poseRanking.getTop(5));
 
       // Refine obtained poses
-
       outInfo("Surface edges contains: " << innerEdges.size() << " points");
 
       for (auto &hyp : poseRanking) {
@@ -543,15 +512,6 @@ public:
 
 protected:
   void drawImageWithLock(cv::Mat &disp) override {
-/*    cv::Mat normals_dot;
-    cv::normalize(this->normal_dot_map, normals_dot, 0, 1, cv::NORM_MINMAX);
-    normals_dot.convertTo(normals_dot, CV_8UC1, 255);
-    cv::Canny(normals_dot, normals_dot, 60, 128);
-    cv::cvtColor(normals_dot, disp, CV_GRAY2BGR);
-    this->normal_dot_map = this->normal_dot_map*0.f;
-    return;*/
-    // image_rgb.copyTo(disp);
-
     cv::Mat gray;
     cv::cvtColor(image_rgb, gray, CV_BGR2GRAY);
 
@@ -698,57 +658,6 @@ protected:
           ++i;
         }
       }
-    }
-  }
-
-  static void drawMesh(cv::Mat &dst, Camera &cam, Mesh &mesh, ::PoseRT &pose) {
-    std::vector<cv::Point3f> vertice;
-    std::vector<cv::Vec3f> normal;
-
-    vertice.reserve(mesh.points.size());
-    // normal.reserve(mesh.normals.size());
-
-    assert(vertice.size() == normal.size());
-
-/*    cv::Mat cam_sp_transform = poseRTToAffine(pose);
-
-    auto rect33 = cv::Rect(0, 0, 3, 3);
-    cv::Mat cam_sp_rot = cv::Mat::eye(3, 4, CV_32FC1);
-    cam_sp_transform(rect33).copyTo(cam_sp_rot(rect33));*/
-
-    for (const auto &vtx : mesh.points)
-      vertice.push_back(vtx);//transform(cam_sp_transform, vtx));
-
-/*    for (const auto &nrm : mesh.normals)
-      normal.push_back(transform(cam_sp_rot, nrm));*/
-
-    std::vector<cv::Point2f> vertice_2d;
-
-    cv::Mat draw_cam_matrix = (cv::Mat_<double>(3, 3) << 570.3422241210938, 0.0, 319.5, 0.0, 570.3422241210938, 239.5, 0.0, 0.0, 1.0);
-    cv::projectPoints(vertice, pose.rot, pose.trans, draw_cam_matrix, {}, vertice_2d);
-
-    cv::Vec3f light = cv::normalize(cv::Vec3f(1, 1, 1));
-
-/*    float alpha = 0.3f;
-    for (const auto &tri : mesh.triangles) {
-      cv::Vec3f avg_normal = (normal[tri[0]] + normal[tri[1]] + normal[tri[2]]) / 3;
-
-      float brightness = avg_normal.dot(light);
-      cv::Scalar color = cv::Scalar(255*brightness, 255*brightness, 255*brightness);
-
-      std::vector<cv::Point2i> poly{
-          vertice_2d[tri[0]],
-          vertice_2d[tri[1]],
-          vertice_2d[tri[2]]};
-
-      cv::Mat mask = cv::Mat::zeros(dst.size(), CV_8UC3);
-      cv::fillConvexPoly(mask, poly, color);
-
-      dst += mask*alpha;
-    }*/
-
-    for (const auto &pt2 : vertice_2d) {
-      cv::circle(dst, pt2, 1, cv::Scalar(0, 255, 0), -1);
     }
   }
 
@@ -907,8 +816,6 @@ protected:
     dot_map.convertTo(dot_map, CV_8UC1, 255);
     cv::Canny(dot_map, dot_map, 60, 128);
 
-    // this->normal_map += normal_map;
-
     std::vector<cv::Point3f> points_3d;
 
     checkViewCloudLookup(camera, image_size, this->lookupX, this->lookupY);
@@ -946,13 +853,12 @@ private:
   int rotation_angle_samples{10};
   int footprint_image_size{240};
 
-  double rejectScoreLevel = 0.001;
-  double normalizedAcceptScoreLevel = 0.9;
-  // size_t maxICPHypothesesNum = 10;
-  bool repairPointCloud = false;
+  double rejectScoreLevel{0.001};
+  double normalizedAcceptScoreLevel{0.9};
+  bool repairPointCloud{false};
   bool visualizeSolidMeshes{false};
 
-  int icp2d3dIterationsLimit {100};
+  int icp2d3dIterationsLimit{100};
 
   std::map<std::string, ::MeshEdgeModel> edge_models;
 
@@ -968,8 +874,6 @@ private:
 
   cv::Mat image_rgb;
   cv::Mat distance_mat = cv::Mat(480, 640, CV_16UC1);
-  cv::Mat normal_map = cv::Mat::zeros(480, 640, CV_32FC3);
-  cv::Mat normal_dot_map = cv::Mat::zeros(480, 640, CV_32FC1);
 
   cv::Mat lookupX;
   cv::Mat lookupY;
