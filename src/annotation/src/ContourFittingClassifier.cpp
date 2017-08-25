@@ -490,38 +490,43 @@ public:
       // Refine obtained poses
 
       outInfo("Surface edges contains: " << innerEdges.size() << " points");
+
       for (auto &hyp : poseRanking) {
-        // ::Mesh &mesh = this->edge_models[hyp.getClass()].mesh;
+        ::Mesh &mesh = this->edge_models[hyp.getClass()].mesh;
 
-        // auto points_3d = getMeshSurfaceEdgesAtPose(mesh, hyp.pose, this->camera, cas_image_depth.size());
+        auto edge_points_3d = getMeshSurfaceEdgesAtPose(mesh, hyp.pose, this->camera, cas_image_depth.size());
 
-        // ::PoseRT new_pose;
-        // double cost = 0;
+        ::PoseRT new_pose;
+        double cost = 0;
         cv::Mat jacobian;
 
-        // outInfo("Running 2d-3d ICP ... ");
-        // std::tie(new_pose, cost, jacobian) = fit2d3d(points3d, hyp.pose, innerEdges, this->camera);
-        // outInfo("\tdone: cost = " << cost);
-        // assert(cost < 1 && cost >= 0);
+        outInfo("Running 2d-3d ICP ... ");
+        std::tie(new_pose, cost, jacobian) = GeometryCV::fit2d3d(edge_points_3d, hyp.pose, innerEdges, this->camera, this->icp2d3dIterationsLimit);
+        outInfo("\tdone: cost = " << cost);
+        assert(cost < 1 && cost >= 0);
+        if (cost != 0)
+          hyp.setScore(-cost);
 
-        // hyp.pose = new_pose;
+        hyp.pose = new_pose;
 
-        hyp.pose = alignObjectsPoseWithPlane(hyp.pose, cv::Vec3f(0, 0, 0), plane_normal, plane_distance, jacobian);
+        // hyp.pose = alignObjectsPoseWithPlane(hyp.pose, cv::Vec3f(0, 0, 0), plane_normal, plane_distance, this->camera, jacobian);
 
         // outInfo("Running 2d-3d ICP2 ... ");
         // std::tie(new_pose, cost, std::ignore) = fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera/*, plane_normal);
         // outInfo("\tdone: cost = " << cost);
 
         // hyp.pose = new_pose;
+
+        break;
       }
 
       outInfo("Has " << poseRanking.size() << " hypotheses for the segment");
       auto top_hypotheses = poseRanking.getTop(1);
       outInfo("Top hypothesis size: " << top_hypotheses.size());
       if (this->repairPointCloud && (top_hypotheses.size() > 0)) {
-        const auto mesh = this->edge_models[top_hypotheses[0].getClass()].mesh;
-        auto points_2d = GeometryCV::projectPoints(mesh.points, top_hypotheses[0].pose, this->camera);
-        this->fitted_silhouettes.push_back(points_2d);
+        // const auto mesh = this->edge_models[top_hypotheses[0].getClass()].mesh;
+        // auto points_2d = GeometryCV::projectPoints(mesh.points, top_hypotheses[0].pose, this->camera);
+        // this->fitted_silhouettes.push_back(points_2d);
         this->drawHypothesisToCAS(cas, cas_image_depth, view_cloud, top_hypotheses[0], this->camera);
       }
 
@@ -792,15 +797,16 @@ protected:
 
   // Assume that object's default orientation is bottom down, with origin point at zero;
   // returns a new pose for the object
-  ::PoseRT alignObjectsPoseWithPlane(::PoseRT initial_pose, cv::Vec3f mesh_anchor_point, cv::Vec3f support_plane_normal, const float support_plane_distance, cv::Mat &jacobian) {
+  ::PoseRT alignObjectsPoseWithPlane(::PoseRT initial_pose, cv::Vec3f mesh_anchor_point, cv::Vec3f support_plane_normal, const float support_plane_distance, ::Camera &camera, cv::Mat &jacobian) {
     auto spd = support_plane_distance;
 
     // find anchor point
     auto objects_anchor_point_camspace = GeometryCV::transform(initial_pose, mesh_anchor_point);
+    auto view_ray = objects_anchor_point_camspace / cv::norm(objects_anchor_point_camspace);
 
-    // find anchor point offset
-    auto lambda = -spd + support_plane_normal.ddot(objects_anchor_point_camspace);
-    auto anchor_offset = -support_plane_normal*lambda;
+    // find anchor point offset along view ray
+    auto lambda = spd / support_plane_normal.ddot(view_ray);
+    auto anchor_offset = lambda*view_ray - objects_anchor_point_camspace;
 
     // find axes rotation transformation to align object's up to plane normal
     cv::Vec3f objects_up_local(0, 1, 0);
@@ -808,11 +814,6 @@ protected:
     auto objects_up_camspace = GeometryCV::transform(object_to_camera_rotation, objects_up_local);
 
     double phi = std::acos(support_plane_normal.ddot(objects_up_camspace));
-    outInfo("Phi: " << phi);
-    outInfo("camsp_up:" << objects_up_camspace);
-    outInfo("norm:" << support_plane_normal);
-    outInfo("lambda:" << lambda);
-    outInfo("Anchor offset:" << anchor_offset);
     // phi = std::min(phi, M_PI - phi);
 
     cv::Vec3f up_to_n_rot_axis = objects_up_camspace.cross(support_plane_normal);
@@ -859,7 +860,7 @@ protected:
     cv::Mat x;
     cv::solve(A, b, x, cv::DECOMP_SVD);
 
-    outInfo("Support plane pose delta: " << x.t());
+    outDebug("Support plane pose delta: " << x.t());
 
     ::PoseRT align_to_plane_objects_pose {
       cv::Vec3f{static_cast<float>(x.at<double>(0)),
@@ -908,7 +909,7 @@ protected:
 
     // this->normal_map += normal_map;
 
-    std::vector<cv::Point3f> result;
+    std::vector<cv::Point3f> points_3d;
 
     checkViewCloudLookup(camera, image_size, this->lookupX, this->lookupY);
 
@@ -917,14 +918,24 @@ protected:
         if (dot_map.at<uint8_t>(i, j) == 255) {
           cv::Point3f pt3;
 
-          pt3.x = this->lookupX.at<float>(j);
-          pt3.y = this->lookupY.at<float>(i);
-
           pt3.z = z_buffer.at<float>(i, j);
 
-          result.push_back(pt3);
+          pt3.x = this->lookupX.at<float>(j) * pt3.z;
+          pt3.y = this->lookupY.at<float>(i) * pt3.z;
+
+          points_3d.push_back(pt3);
         }
       }
+
+    for (auto &pt : points_3d) {
+      pt.x -= pose.trans(0);
+      pt.y -= pose.trans(1);
+      pt.z -= pose.trans(2);
+    }
+
+    PoseRT to_origin_rot{-pose.rot, {0., 0., 0.}};
+    cv::Mat to_origin = GeometryCV::poseRTToAffine(to_origin_rot);
+    auto result = GeometryCV::transform(to_origin, points_3d);
 
     return result;
   }

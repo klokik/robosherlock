@@ -94,6 +94,12 @@ namespace GeometryCV {
     return transform(M, vec);
   }
 
+  cv::Point3f transform(const ::PoseRT &pose, const cv::Point3f &pt) {
+    cv::Mat M = poseRTToAffine(pose);
+
+    return transform(M, pt);
+  }
+
   std::vector<cv::Point2f> transform(const cv::Mat &M, const std::vector<cv::Point2f> &pts) {
     std::vector<cv::Point2f> result;
 
@@ -321,6 +327,10 @@ namespace GeometryCV {
       double ref_error = std::numeric_limits<double>::max();
       if (num != 0)
         ref_error = std::sqrt(sum) / num;
+      else {
+        outInfo("Something's wrong - the original pose if too far from desired");
+        break;
+      }
 
       outInfo("ref_error: " << ref_error << " (" << num << "/" << weights.rows << ")") ;
 
