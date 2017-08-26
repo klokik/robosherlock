@@ -118,6 +118,7 @@ struct Mesh {
 };
 
 std::vector<cv::Point2f> getCannyEdges(cv::Mat &grayscale, cv::Rect &input_roi);
+void saveToFile(std::string filename, const std::vector<cv::Point3f> &pts);
 void checkViewCloudLookup(const ::Camera &camera, const cv::Size size, cv::Mat &lookupX, cv::Mat &lookupY);
 
 class MeshFootprint {
@@ -464,6 +465,11 @@ public:
         ::Mesh &mesh = this->edge_models[hyp.getClass()].mesh;
 
         auto edge_points_3d = getMeshSurfaceEdgesAtPose(mesh, hyp.pose, this->camera, cas_image_depth.size());
+        // for (const auto &pt : mesh.points)
+        //   edge_points_3d.push_back(pt);
+        // saveToFile("/tmp/cloud.pcd", edge_points_3d);
+
+        // assert(false);
 
         ::PoseRT new_pose;
         double cost = 0;
@@ -478,24 +484,22 @@ public:
 
         hyp.pose = new_pose;
 
-        // hyp.pose = alignObjectsPoseWithPlane(hyp.pose, cv::Vec3f(0, 0, 0), plane_normal, plane_distance, this->camera, jacobian);
+        hyp.pose = alignObjectsPoseWithPlane(hyp.pose, cv::Vec3f(0, 0, 0), plane_normal, plane_distance, this->camera, jacobian);
 
         // outInfo("Running 2d-3d ICP2 ... ");
         // std::tie(new_pose, cost, std::ignore) = fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera/*, plane_normal);
         // outInfo("\tdone: cost = " << cost);
 
         // hyp.pose = new_pose;
-
-        break;
       }
 
       outInfo("Has " << poseRanking.size() << " hypotheses for the segment");
       auto top_hypotheses = poseRanking.getTop(1);
       outInfo("Top hypothesis size: " << top_hypotheses.size());
       if (this->repairPointCloud && (top_hypotheses.size() > 0)) {
-        // const auto mesh = this->edge_models[top_hypotheses[0].getClass()].mesh;
-        // auto points_2d = GeometryCV::projectPoints(mesh.points, top_hypotheses[0].pose, this->camera);
-        // this->fitted_silhouettes.push_back(points_2d);
+        const auto mesh = this->edge_models[top_hypotheses[0].getClass()].mesh;
+        auto points_2d = GeometryCV::projectPoints(mesh.points, top_hypotheses[0].pose, this->camera);
+        this->fitted_silhouettes.push_back(points_2d);
         this->drawHypothesisToCAS(cas, cas_image_depth, view_cloud, top_hypotheses[0], this->camera);
       }
 
@@ -797,7 +801,7 @@ protected:
   }
 
   std::vector<cv::Point3f> getMeshSurfaceEdgesAtPose(const ::Mesh &mesh, const ::PoseRT &pose, const ::Camera &camera, const cv::Size image_size) {
-    cv::Mat z_buffer = cv::Mat::ones(image_size, CV_32FC1) * (float)Drawing::max_depth_32f;
+    cv::Mat z_buffer = cv::Mat::ones(image_size, CV_32FC1) * Drawing::max_depth_32f;
     cv::Mat normal_map = cv::Mat::zeros(image_size, CV_32FC3);
 
     Drawing::drawMeshNormals(z_buffer, normal_map, mesh.points, mesh.normals, mesh.triangles,
@@ -822,10 +826,10 @@ protected:
 
     for (int i = 0; i < image_size.height; ++i)
       for (int j = 0; j < image_size.width; ++j) {
-        if (dot_map.at<uint8_t>(i, j) == 255) {
+        if ((dot_map.at<uint8_t>(i, j) == 255) && (z_buffer.at<float>(i, j) != Drawing::max_depth_32f)) {
           cv::Point3f pt3;
 
-          pt3.z = z_buffer.at<float>(i, j);
+          pt3.z = -z_buffer.at<float>(i, j);
 
           pt3.x = this->lookupX.at<float>(j) * pt3.z;
           pt3.y = this->lookupY.at<float>(i) * pt3.z;
@@ -912,6 +916,26 @@ std::vector<cv::Point2f> getCannyEdges(cv::Mat &grayscale, cv::Rect &input_roi) 
   }
 
   return result;
+}
+
+void saveToFile(std::string filename, const std::vector<cv::Point3f> &pts) {
+  std::ofstream ofs(filename);
+
+  ofs << "VERSION .7\n"
+      << "FIELDS x y z\n"
+      << "SIZE 4 4 4\n"
+      << "TYPE F F F\n"
+      << "COUNT 1 1 1\n"
+      << "WIDTH " << pts.size() << "\n"
+      << "HEIGHT 1\n"
+      << "VIEWPOINT 0 0 0 1 0 0 0\n"
+      << "POINTS " << pts.size() << "\n"
+      << "DATA ascii\n";
+
+  for (const auto &pt : pts)
+    ofs << pt.x << " " << pt.y << " " << pt.z << "\n";
+
+  ofs.close();
 }
 
 void checkViewCloudLookup(const ::Camera &camera, const cv::Size size, cv::Mat &lookupX, cv::Mat &lookupY)
