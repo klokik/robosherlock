@@ -87,21 +87,21 @@ class SimilarityRanking {
 
     for (auto &class_i : this->items) {
       auto &rankItems = class_i.second;
-      
-      auto isLocalMaximum = [&radius, &rankItems] (const RankingItem_t &item) {
+
+      auto isNotLocalMaximum = [&radius, &rankItems] (const RankingItem_t &item) {
         bool isMaximum = true;
         auto offset = &item - &*rankItems.cbegin();
         auto it = std::next(rankItems.begin(), offset);
 
-        auto begin = std::min(rankItems.begin(), std::prev(it, radius));
-        auto end = std::max(rankItems.end(), std::next(it, radius));
+        auto begin = std::max(rankItems.begin(), std::prev(it, radius));
+        auto end = std::min(rankItems.end(), std::next(it, radius+1));
         for (auto jt = begin; jt != end; jt = std::next(jt))
-          isMaximum &= (jt->getScore() < it->getScore());
+          isMaximum &= (jt->getScore() <= it->getScore());
 
-        return isMaximum;
+        return !isMaximum;
       };
 
-      std::remove_if(rankItems.begin(), rankItems.end(), isLocalMaximum);
+      rankItems.erase(std::remove_if(rankItems.begin(), rankItems.end(), isNotLocalMaximum), rankItems.end());
     }
   }
 
@@ -124,16 +124,16 @@ class SimilarityRanking {
     for (auto &class_i : this->items) {
       auto &rankItems = class_i.second;
       
-      auto isScoreOk = [&minLevel] (const RankingItem_t &item) {
-        return (item.getScore() > minLevel);
+      auto isItemBad = [&minLevel] (const RankingItem_t &item) {
+        return (item.getScore() < minLevel);
       };
 
-      std::remove_if(rankItems.begin(), rankItems.end(), isScoreOk);
+      rankItems.erase(std::remove_if(rankItems.begin(), rankItems.end(), isItemBad), rankItems.end());
     }
   }
 
-  public: std::vector<float> getHistogram() {
-    std::vector<float> result;
+  public: std::vector<double> getHistogram() {
+    std::vector<double> result;
     for (auto sample_it = this->begin() ; sample_it != this->end(); ++sample_it)
       result.push_back(sample_it->getScore());
 

@@ -117,4 +117,22 @@ namespace Drawing {
       drawTriangleInterp(dst_depth_32fc1, dst_32fc3, poly, norms);
     }
   }
+
+  cv::Mat drawHistogram(const std::vector<double> &data, const int bin_width, const int height, const double level = 0.) {
+    int bins_num = data.size();
+    cv::Mat hist = cv::Mat::zeros(height, bins_num*bin_width, CV_8UC3);
+
+    double max_val = *std::max_element(data.begin(), data.end());
+
+    int i = 0;
+    for (auto &bin : data) {
+      float x0 = i * bin_width;
+      float y0 = (1 - bin/max_val) * height;
+      auto color = (bin/max_val > level ? cv::Scalar(0, 128, 0) : cv::Scalar(0, 0, 128));
+      cv::rectangle(hist, cv::Rect(x0, y0, bin_width, height - y0 + 1), color, -1);
+      i++;
+    }
+
+    return hist;
+  }
 }

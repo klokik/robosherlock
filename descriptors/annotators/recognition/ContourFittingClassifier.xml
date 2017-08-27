@@ -40,12 +40,6 @@
             <mandatory>true</mandatory>
         </configurationParameter>
         <configurationParameter>
-            <name>silhouetteMarginSize</name>
-            <type>Integer</type>
-            <multiValued>false</multiValued>
-            <mandatory>true</mandatory>
-        </configurationParameter>
-        <configurationParameter>
             <name>icp2d3dIterationsLimit</name>
             <type>Integer</type>
             <multiValued>false</multiValued>
@@ -54,6 +48,30 @@
         <configurationParameter>
             <name>repairPointCloud</name>
             <type>Boolean</type>
+            <multiValued>false</multiValued>
+            <mandatory>true</mandatory>
+        </configurationParameter>
+        <configurationParameter>
+            <name>performICPPoseRefinement</name>
+            <type>Boolean</type>
+            <multiValued>false</multiValued>
+            <mandatory>true</mandatory>
+        </configurationParameter>
+        <configurationParameter>
+            <name>applySupportPlaneAssumption</name>
+            <type>Boolean</type>
+            <multiValued>false</multiValued>
+            <mandatory>true</mandatory>
+        </configurationParameter>
+        <configurationParameter>
+            <name>rejectScoreLevel</name>
+            <type>Float</type>
+            <multiValued>false</multiValued>
+            <mandatory>true</mandatory>
+        </configurationParameter>
+        <configurationParameter>
+            <name>normalizedAcceptScoreLevel</name>
+            <type>Float</type>
             <multiValued>false</multiValued>
             <mandatory>true</mandatory>
         </configurationParameter>
@@ -92,21 +110,39 @@
             </value>
         </nameValuePair>
         <nameValuePair>
-            <name>silhouetteMarginSize</name>
-            <value>
-                <integer>4</integer>
-            </value>
-        </nameValuePair>
-        <nameValuePair>
             <name>icp2d3dIterationsLimit</name>
             <value>
-                <integer>100</integer>
+                <integer>10</integer>
             </value>
         </nameValuePair>
         <nameValuePair>
             <name>repairPointCloud</name>
             <value>
                 <boolean>true</boolean>
+            </value>
+        </nameValuePair>
+        <nameValuePair>
+            <name>performICPPoseRefinement</name>
+            <value>
+                <boolean>false</boolean>
+            </value>
+        </nameValuePair>
+        <nameValuePair>
+            <name>applySupportPlaneAssumption</name>
+            <value>
+                <boolean>false</boolean>
+            </value>
+        </nameValuePair>
+        <nameValuePair>
+            <name>rejectScoreLevel</name>
+            <value>
+                <float>0.001</float>
+            </value>
+        </nameValuePair>
+        <nameValuePair>
+            <name>normalizedAcceptScoreLevel</name>
+            <value>
+                <float>0.9</float>
             </value>
         </nameValuePair>
     </configurationParameterSettings>

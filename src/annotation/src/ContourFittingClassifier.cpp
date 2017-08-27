@@ -121,6 +121,8 @@ std::vector<cv::Point2f> getCannyEdges(cv::Mat &grayscale, cv::Rect &input_roi);
 void saveToFile(std::string filename, const std::vector<cv::Point3f> &pts);
 void checkViewCloudLookup(const ::Camera &camera, const cv::Size size, cv::Mat &lookupX, cv::Mat &lookupY);
 
+double distanceToScore(const double dist) noexcept;
+
 class MeshFootprint {
 public:
   std::vector<cv::Point2f> outerEdge;
@@ -131,14 +133,13 @@ public:
 
   MeshFootprint(const ::Mesh &mesh, const ::PoseRT &pose,
       ::Camera &camera, const int im_size) {
-    std::vector<cv::Point3f> points3d;
+    std::vector<cv::Point3f> points_3d;
     for (auto &pt : mesh.points)
-      points3d.push_back(pt - mesh.origin);
+      points_3d.push_back(pt - mesh.origin);
 
-    std::vector<cv::Point2f> points2d;
-    cv::projectPoints(points3d, pose.rot, pose.trans, camera.matrix, camera.distortion, points2d);
+    std::vector<cv::Point2f> points_2d = GeometryCV::projectPoints(points_3d, pose, camera);
 
-    cv::Rect_<float> b_rect = GeometryCV::getBoundingRect(points2d);
+    cv::Rect_<float> b_rect = GeometryCV::getBoundingRect(points_2d);
 
     float rect_size = std::max(b_rect.width, b_rect.height);
     auto rate = im_size / rect_size;
@@ -148,7 +149,7 @@ public:
     // cv::Mat normal_img = cv::Mat::zeros(fp_mat_size, CV_32FC1);
     cv::Mat footprint_img = cv::Mat::zeros(fp_mat_size, CV_8UC1);
 
-    for (auto &point : points2d) {
+    for (auto &point : points_2d) {
       cv::Point2i xy = (point - b_rect.tl())*rate;
 
       assert(xy.x >= 0);
@@ -164,9 +165,9 @@ public:
 
     for (const auto &tri : mesh.triangles) {
       std::vector<cv::Point2i> poly{
-          points2d[tri[0]],
-          points2d[tri[1]],
-          points2d[tri[2]]};
+          points_2d[tri[0]],
+          points_2d[tri[1]],
+          points_2d[tri[2]]};
 
       cv::fillConvexPoly(footprint_img, poly, cv::Scalar(255));
       // TODO: Normal map for inner edges
@@ -263,6 +264,12 @@ public:
     ctx.extractValue("rotationAngleSamples", this->rotation_angle_samples);
     ctx.extractValue("footprintImageSize", this->footprint_image_size);
     ctx.extractValue("icp2d3dIterationsLimit", this->icp2d3dIterationsLimit);
+
+    ctx.extractValue("performICPPoseRefinement", this->performICPPoseRefinement);
+    ctx.extractValue("applySupportPlaneAssumption", this->applySupportPlaneAssumption);
+
+    ctx.extractValue("rejectScoreLevel", this->rejectScoreLevel);
+    ctx.extractValue("normalizedAcceptScoreLevel", this->normalizedAcceptScoreLevel);
 
     std::vector<std::string*> filenames;
     ctx.extractValue("referenceMeshes", filenames);
@@ -367,8 +374,6 @@ public:
 
       ImageSegmentation::Segment i_segment;
       rs::conversion::from(segment, i_segment);
-      this->segments.push_back(i_segment);
-      this->labels.push_back(std::string("lol") + std::to_string(1));
 
       std::vector<cv::Point2f> innerEdges = getCannyEdges(image_grayscale, i_segment.rect);
       if (innerEdges.size() == 0)
@@ -390,8 +395,8 @@ public:
         for (auto it = kv.second.items.cbegin(); it < kv.second.items.cend(); ++it) {
           ::PoseHypothesis hypothesis(kv.first, std::distance(kv.second.items.cbegin(), it), 0);
 
-          double pr_fitness_score = 0;
-          cv::Mat pr_trans = GeometryCV::fitProcrustes2d(it->outerEdge, contour, &pr_fitness_score);
+          double procrustes_distance = 0;
+          cv::Mat pr_trans = GeometryCV::fitProcrustes2d(it->outerEdge, contour, &procrustes_distance);
 
           std::vector<cv::Point3f> points_3d;
           for (auto &pt : mesh.points)
@@ -421,76 +426,71 @@ public:
           std::tie(distance, confidence) = GeometryCV::getChamferDistance(trans_mesh_fp.outerEdge, contour, cas_image_depth.size(), dist_transform);
 
           // outInfo("distance: " << distance << " confidence" << confidence);
-          hypothesis.setScore(-pr_fitness_score);//distance);//std::exp(-distance) * confidence);
+          hypothesis.setScore(distanceToScore(procrustes_distance /*distance*/)/**confidence*/);
 
           // #pragma omp critical
           poseRanking.addElement(hypothesis);
         }
       }
 
-      poseRanking.supressNonMaximum(1);
+      // poseRanking.supressNonMaximum(1);
 
-      poseRanking.filter(this->rejectScoreLevel);
+      // poseRanking.filter(this->rejectScoreLevel);
 
       if (poseRanking.size() == 0) {
         outInfo("Low probable silhouette => rejecting");
         continue;
       }
 
-      // plot ranking distribution
-/*      auto ranks = poseRanking.getTop(100);
-      int hsize = ranks.size();
-      cv::Mat hist(hsize, hsize, CV_8UC3, cv::Scalar(0, 0, 0));
-      int i = 0;
-      for (auto &re : ranks) {
-        float x = i;
-        float y = hsize - re.probability*hsize;
-        auto color = (re.probability > norm_confidence_level ? cv::Scalar(0, 128, 0) : cv::Scalar(0, 0, 128));
-        cv::line(hist, cv::Point(x, hsize-1), cv::Point(x, y), color, 1);
-        i++;
-      }
-      this->histograms.push_back(hist);*/
+      poseRanking.normalize();
+      // poseRanking.filter(this->normalizedAcceptScoreLevel);
+
       auto histogram = poseRanking.getHistogram();
+      cv::Mat hist_img = Drawing::drawHistogram(histogram, 3, 72, this->normalizedAcceptScoreLevel);
+      this->histograms.push_back(hist_img);
 
-      auto max_pr = poseRanking.normalize();
-
-      poseRanking.filter(this->normalizedAcceptScoreLevel);
-
-      // this->pose_hypotheses.push_back(poseRanking.getTop(5));
 
       // Refine obtained poses
       outInfo("Surface edges contains: " << innerEdges.size() << " points");
 
       for (auto &hyp : poseRanking) {
-        ::Mesh &mesh = this->edge_models[hyp.getClass()].mesh;
-
-        auto edge_points_3d = getMeshSurfaceEdgesAtPose(mesh, hyp.pose, this->camera, cas_image_depth.size());
-        // for (const auto &pt : mesh.points)
-        //   edge_points_3d.push_back(pt);
-        // saveToFile("/tmp/cloud.pcd", edge_points_3d);
-
-        // assert(false);
 
         ::PoseRT new_pose;
-        double cost = 0;
+        double distance = 0;
         cv::Mat jacobian;
 
-        outInfo("Running 2d-3d ICP ... ");
-        std::tie(new_pose, cost, jacobian) = GeometryCV::fit2d3d(edge_points_3d, hyp.pose, innerEdges, this->camera, this->icp2d3dIterationsLimit);
-        outInfo("\tdone: cost = " << cost);
-        assert(cost < 1 && cost >= 0);
-        if (cost != 0)
-          hyp.setScore(-cost);
+        ::Mesh &mesh = this->edge_models[hyp.getClass()].mesh;
 
-        hyp.pose = new_pose;
+        if (this->performICPPoseRefinement) {
+          auto edge_points_3d = getMeshSurfaceEdgesAtPose(mesh, hyp.pose, this->camera, cas_image_depth.size());
 
-        hyp.pose = alignObjectsPoseWithPlane(hyp.pose, cv::Vec3f(0, 0, 0), plane_normal, plane_distance, this->camera, jacobian);
+          outInfo("Running 2d-3d ICP ... ");
+          std::tie(new_pose, distance, jacobian) = GeometryCV::fit2d3d(edge_points_3d, hyp.pose, innerEdges, this->camera, this->icp2d3dIterationsLimit);
+          outInfo("\tdone: distance = " << distance);
+          assert(distance < 10 && distance >= 0);
+          if (std::isnormal(distance)) {
+            hyp.setScore(distanceToScore(distance));
+            hyp.pose = new_pose;
+          }
 
-        // outInfo("Running 2d-3d ICP2 ... ");
-        // std::tie(new_pose, cost, std::ignore) = fit2d3d(surface_edge_mesh, hyp.pose, surface_edges, world_camera/*, plane_normal);
-        // outInfo("\tdone: cost = " << cost);
+          if (this->applySupportPlaneAssumption) {
+            hyp.pose = alignObjectsPoseWithPlane(hyp.pose, cv::Vec3f(0, 0, 0), plane_normal, plane_distance, this->camera, jacobian);
+            edge_points_3d = getMeshSurfaceEdgesAtPose(mesh, hyp.pose, this->camera, cas_image_depth.size());
 
-        // hyp.pose = new_pose;
+            outInfo("Running 2d-3d ICP2 ... ");
+            std::tie(new_pose, distance, std::ignore) = GeometryCV::fit2d3d(edge_points_3d, hyp.pose, innerEdges, this->camera, this->icp2d3dIterationsLimit, plane_normal);
+            if (std::isnormal(distance)) {
+              hyp.setScore(distanceToScore(distance));
+              hyp.pose = new_pose;
+            }
+          }
+        }
+        else {
+          if (this->applySupportPlaneAssumption) {
+            hyp.pose = alignObjectsPoseWithPlane(hyp.pose, cv::Vec3f(0, 0, 0), plane_normal, plane_distance, this->camera, jacobian);
+            // TODO: find new score
+          }
+        }
       }
 
       outInfo("Has " << poseRanking.size() << " hypotheses for the segment");
@@ -500,6 +500,10 @@ public:
         const auto mesh = this->edge_models[top_hypotheses[0].getClass()].mesh;
         auto points_2d = GeometryCV::projectPoints(mesh.points, top_hypotheses[0].pose, this->camera);
         this->fitted_silhouettes.push_back(points_2d);
+
+        this->segments.push_back(i_segment);
+        this->labels.push_back(std::string("lol") + std::to_string(1));
+
         this->drawHypothesisToCAS(cas, cas_image_depth, view_cloud, top_hypotheses[0], this->camera);
       }
 
@@ -508,7 +512,6 @@ public:
       // break;
     }
 
-    first = false;
     outInfo("took: " << clock.getTime() << " ms.");
     return UIMA_ERR_NONE;
   }
@@ -540,7 +543,6 @@ protected:
 
     ImageSegmentation::drawSegments2D(disp, this->segments, this->labels, 1, 0.5);
 
-    // return;
     for (const auto &sil : this->fitted_silhouettes) {
       for (const auto &pt : sil)
         cv::circle(disp, pt, 1, cv::Scalar(0, 0, 255), -1);
@@ -557,29 +559,16 @@ protected:
       for (auto &pt : sil)
         cv::circle(transpB, pt, 1, cv::Scalar(255, 0, 0), -1);
     }
-/*    auto &sil = this->surface_edges_blue[counter++ % this->surface_edges_blue.size()];
-    for (auto &pt : sil)
-      cv::circle(transpB, pt, 1, cv::Scalar(255, 0, 0), -1);*/
 
 
-/*    for (size_t i = 0; i < this->labels.size(); ++i) {
-      outInfo("draw");
-      ::PoseHypothesis hyp;
-      if (this->pose_hypotheses[i].size() > 0)
-        hyp = this->pose_hypotheses[i].front();
-      else
-        continue;
-
-      Camera cam;
-      drawMesh(disp, cam, this->edge_models[this->labels[i]].mesh, hyp.pose);
-// continue;
+    for (size_t i = 0; i < this->segments.size(); ++i) {
       auto &seg_center = segments[i].center;
       cv::Rect hist_dst_rect(cv::Point(seg_center.x, seg_center.y + 5 + segments[i].rect.height/2), histograms[i].size());
       hist_dst_rect = hist_dst_rect & cv::Rect(cv::Point(), disp.size());
       disp(hist_dst_rect) *= 0.5;
       cv::Rect hist_src_rect = (hist_dst_rect - hist_dst_rect.tl()) & cv::Rect(cv::Point(), histograms[i].size());
       disp(hist_dst_rect) += histograms[i](hist_src_rect);
-    }*/
+    }
 
     cv::Mat depth_map;
     distance_mat.convertTo(depth_map, CV_8UC1, 255/1500.0, 0);
@@ -857,10 +846,12 @@ private:
   int rotation_angle_samples{10};
   int footprint_image_size{240};
 
-  double rejectScoreLevel{0.001};
-  double normalizedAcceptScoreLevel{0.9};
+  float rejectScoreLevel{0.001};
+  float normalizedAcceptScoreLevel{0.9};
   bool repairPointCloud{false};
   bool visualizeSolidMeshes{false};
+  bool performICPPoseRefinement{false};
+  bool applySupportPlaneAssumption{false};
 
   int icp2d3dIterationsLimit{100};
 
@@ -873,15 +864,13 @@ private:
   std::vector<std::vector<cv::Point2f>> surface_edges_blue;
   std::vector<std::string> labels;
   std::vector<cv::Mat> histograms;
-  bool first {true};
-  size_t counter {0};
 
   cv::Mat image_rgb;
   cv::Mat distance_mat = cv::Mat(480, 640, CV_16UC1);
 
   cv::Mat lookupX;
   cv::Mat lookupY;
-  pcl::PointCloud<pcl::PointXYZRGBA>::Ptr view_cloud {new pcl::PointCloud<pcl::PointXYZRGBA>};
+  pcl::PointCloud<pcl::PointXYZRGBA>::Ptr view_cloud{new pcl::PointCloud<pcl::PointXYZRGBA>};
 
   ::Camera camera;
   ::Camera footprint_camera;
@@ -962,6 +951,10 @@ void checkViewCloudLookup(const ::Camera &camera, const cv::Size size, cv::Mat &
   {
     *it = (c - cx) * fx;
   }
+}
+
+double distanceToScore(const double dist) noexcept {
+  return -std::log(dist);
 }
 
 // This macro exports an entry point that is used to create the annotator.
