@@ -27,7 +27,6 @@ class Camera {
 
 
 namespace GeometryCV {
-
   cv::Mat poseRTToAffine(const ::PoseRT &pose) {
     cv::Mat affine_3d_transform(3, 4, CV_32FC1);
 
@@ -375,7 +374,7 @@ namespace GeometryCV {
     return std::tie(current_pose, last_error, jacobian);
   }
 
-  std::pair<double, double> getChamferDistance(std::vector<cv::Point2f> &a, std::vector<cv::Point2f> &b, cv::Size work_area, cv::Mat &dist_transform) {
+  std::tuple<double, double> getChamferDistance(std::vector<cv::Point2f> &a, std::vector<cv::Point2f> &b, cv::Size work_area, cv::Mat &dist_transform) {
     double distance_sum = 0;
     size_t num_points_hit = 0;
 
@@ -417,7 +416,7 @@ namespace GeometryCV {
       distance = std::numeric_limits<double>::max();
     }
 
-    return std::make_pair(distance, confidence);
+    return std::tie(distance, confidence);
   }
 
   std::vector<cv::Point2f> normalizePoints(const std::vector<cv::Point2f> &pts) {
@@ -465,7 +464,7 @@ namespace GeometryCV {
     }
   }
 
-  std::pair<cv::Mat, double> fitICP(const std::vector<cv::Point2f> &test,const std::vector<cv::Point2f> &model) {
+  std::tuple<cv::Mat, double> fitICP(const std::vector<cv::Point2f> &test,const std::vector<cv::Point2f> &model) {
     pcl::PointCloud<pcl::PointXYZ>::Ptr cl_test(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::PointCloud<pcl::PointXYZ>::Ptr cl_model(new pcl::PointCloud<pcl::PointXYZ>);
 
@@ -498,39 +497,36 @@ namespace GeometryCV {
     cv_trf.at<float>(1, 2) = 0; //eig_trf(1, 3);
     cv_trf.at<float>(2, 2) = 1.f;
 
-    return {cv_trf, score};
+    return std::tie(cv_trf, score);
   }
 
-  std::pair<cv::Vec2f, float> getMeanAndStdDev(const std::vector<cv::Point2f> &sil) {
-    cv::Point2f mean = std::accumulate(sil.cbegin(), sil.cend(), cv::Point2f());
-    mean *= (1.f / sil.size());
+  std::tuple<cv::Vec2f, float> getMeanAndStdDev(const std::vector<cv::Point2f> &pts) {
+    cv::Point2f mean = std::accumulate(pts.cbegin(), pts.cend(), cv::Point2f());
+    mean *= (1.f / pts.size());
 
     float std_dev = 0;
-    for (auto &pt : sil)
+    for (auto &pt : pts)
       std_dev += std::pow(cv::norm(cv::Point2f(pt.x, pt.y) - mean), 2);
 
-    std_dev = std::sqrt(std_dev / sil.size());
+    std_dev = std::sqrt(std_dev / pts.size());
 
-    return std::make_pair(mean, std_dev);
+    return std::tie(mean, std_dev);
   }
 
-  cv::Mat fitProcrustes2d(const std::vector<cv::Point2f> &sil, const std::vector<cv::Point2f> &tmplt, double *fitness_score = nullptr) {
+  std::tuple<cv::Mat, double> fitProcrustes2d(const std::vector<cv::Point2f> &pts, const std::vector<cv::Point2f> &tmplt) {
     cv::Vec2f mean_s, mean_t;
     float deviation_s, deviation_t;
 
     // FIXME: avoid double mean/deviation computation
-    std::tie(mean_s, deviation_s) = getMeanAndStdDev(sil);
+    std::tie(mean_s, deviation_s) = getMeanAndStdDev(pts);
     std::tie(mean_t, deviation_t) = getMeanAndStdDev(tmplt);
 
-    auto ns = normalizePoints(sil);
+    auto ns = normalizePoints(pts);
     auto nt = normalizePoints(tmplt);
 
     cv::Mat icp_mat;
     double fitness;
     std::tie(icp_mat, fitness) = fitICP(ns, nt);
-
-    if (fitness_score)
-      *fitness_score = fitness;
 
     cv::Mat Ts_inv = (cv::Mat_<float>(3, 3) << 1, 0, -mean_s(0), 0, 1, -mean_s(1), 0 , 0, 1);
     cv::Mat Ss_inv = (cv::Mat_<float>(3, 3) << 1/deviation_s, 0, 0, 0, 1/deviation_s, 0, 0 , 0, 1);
@@ -540,6 +536,6 @@ namespace GeometryCV {
 
     cv::Mat sil_to_tmplt_transformation = Tt * St * Rst * Ss_inv * Ts_inv;
 
-    return sil_to_tmplt_transformation;
+    return std::tie(sil_to_tmplt_transformation, fitness);
   }
 }

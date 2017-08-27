@@ -132,10 +132,14 @@ public:
   ::PoseRT pose;
 
   MeshFootprint(const ::Mesh &mesh, const ::PoseRT &pose,
-      ::Camera &camera, const int im_size) {
+      ::Camera &camera, const int im_size, const bool offset = true) {
     std::vector<cv::Point3f> points_3d;
-    for (auto &pt : mesh.points)
-      points_3d.push_back(pt - mesh.origin);
+    for (auto &pt : mesh.points) {
+      if (offset)
+        points_3d.push_back(pt - mesh.origin);
+      else
+        points_3d.push_back(pt);
+    }
 
     std::vector<cv::Point2f> points_2d = GeometryCV::projectPoints(points_3d, pose, camera);
 
@@ -223,7 +227,7 @@ class MeshEdgeModel {
       cv::Vec3f axis{std::cos(axis_inc), std::sin(axis_inc), 0};
 
       for (int r_ang_i = 0; r_ang_i < rotationAngleSamples; ++r_ang_i ) {
-        outInfo("Training sample (" << r_ax_i << ";" << r_ang_i << ")");
+        // outInfo("Training sample (" << r_ax_i << ";" << r_ang_i << ")");
 
         float theta = pi * r_ang_i / rotationAngleSamples;
         auto rodrigues = axis*theta;
@@ -282,6 +286,8 @@ public:
         edge_model.addSampledFootprints(this->rotation_axis_samples,
                                         this->rotation_angle_samples,
                                         this->footprint_image_size);
+
+        outInfo("Trained " << edge_model.items.size() << " samples");
 
         this->edge_models.emplace(*fname, edge_model);
       } catch (const std::exception &ex) {
@@ -386,17 +392,19 @@ public:
       // will be reinitialised by first chamfer distance call
       cv::Mat dist_transform;
       GeometryCV::getChamferDistance(contour, contour, cas_image_depth.size(), dist_transform);
+      double contour_stddev;
+      std::tie(std::ignore, contour_stddev) = GeometryCV::getMeanAndStdDev(contour);
 
       for (const auto &kv : this->edge_models) {
         auto &mesh = kv.second.mesh;
         assert(mesh.points.size() >= 4);
 
-        // #pragma omp parallel for
+        #pragma omp parallel for
         for (auto it = kv.second.items.cbegin(); it < kv.second.items.cend(); ++it) {
           ::PoseHypothesis hypothesis(kv.first, std::distance(kv.second.items.cbegin(), it), 0);
 
-          double procrustes_distance = 0;
-          cv::Mat pr_trans = GeometryCV::fitProcrustes2d(it->outerEdge, contour, &procrustes_distance);
+          cv::Mat pr_trans;
+          std::tie(pr_trans, std::ignore) = GeometryCV::fitProcrustes2d(it->outerEdge, contour);
 
           std::vector<cv::Point3f> points_3d;
           for (auto &pt : mesh.points)
@@ -422,39 +430,38 @@ public:
           hypothesis.pose = pose_3d;
 
           double distance, confidence;
-          auto trans_mesh_fp = ::MeshFootprint(mesh, pose_3d, this->footprint_camera, this->footprint_image_size);
+          auto trans_mesh_fp = ::MeshFootprint(mesh, pose_3d, this->camera, this->footprint_image_size, false);
           std::tie(distance, confidence) = GeometryCV::getChamferDistance(trans_mesh_fp.outerEdge, contour, cas_image_depth.size(), dist_transform);
 
-          // outInfo("distance: " << distance << " confidence" << confidence);
-          hypothesis.setScore(distanceToScore(procrustes_distance /*distance*/)/**confidence*/);
+          distance /= contour_stddev; // All sane values should be in (0,1] range
+          hypothesis.setScore(distanceToScore(distance));
 
-          // #pragma omp critical
+          #pragma omp critical
           poseRanking.addElement(hypothesis);
         }
       }
 
-      // poseRanking.supressNonMaximum(1);
+      poseRanking.supressNonMaximum(1);
 
-      // poseRanking.filter(this->rejectScoreLevel);
+      poseRanking.filter(this->rejectScoreLevel);
 
       if (poseRanking.size() == 0) {
         outInfo("Low probable silhouette => rejecting");
         continue;
       }
 
-      poseRanking.normalize();
-      // poseRanking.filter(this->normalizedAcceptScoreLevel);
+      auto max_score = poseRanking.getMaxScore();
 
       auto histogram = poseRanking.getHistogram();
-      cv::Mat hist_img = Drawing::drawHistogram(histogram, 3, 72, this->normalizedAcceptScoreLevel);
+      cv::Mat hist_img = Drawing::drawHistogram(histogram, 3, 72, max_score*this->normalizedAcceptScoreLevel);
       this->histograms.push_back(hist_img);
 
+      poseRanking.filter(max_score * this->normalizedAcceptScoreLevel);
 
-      // Refine obtained poses
       outInfo("Surface edges contains: " << innerEdges.size() << " points");
 
+      // Refine obtained poses
       for (auto &hyp : poseRanking) {
-
         ::PoseRT new_pose;
         double distance = 0;
         cv::Mat jacobian;
@@ -488,21 +495,25 @@ public:
         else {
           if (this->applySupportPlaneAssumption) {
             hyp.pose = alignObjectsPoseWithPlane(hyp.pose, cv::Vec3f(0, 0, 0), plane_normal, plane_distance, this->camera, jacobian);
-            // TODO: find new score
+
+            // find new score
+            ::MeshFootprint new_fp(mesh, hyp.pose, this->camera, this->footprint_image_size, false);
+            std::tie(distance, std::ignore) = GeometryCV::getChamferDistance(new_fp.outerEdge, contour, cas_image_depth.size(), dist_transform);
+
+            hyp.setScore(distanceToScore(distance / contour_stddev));
           }
         }
       }
 
       outInfo("Has " << poseRanking.size() << " hypotheses for the segment");
       auto top_hypotheses = poseRanking.getTop(1);
-      outInfo("Top hypothesis size: " << top_hypotheses.size());
       if (this->repairPointCloud && (top_hypotheses.size() > 0)) {
         const auto mesh = this->edge_models[top_hypotheses[0].getClass()].mesh;
         auto points_2d = GeometryCV::projectPoints(mesh.points, top_hypotheses[0].pose, this->camera);
         this->fitted_silhouettes.push_back(points_2d);
 
         this->segments.push_back(i_segment);
-        this->labels.push_back(std::string("lol") + std::to_string(1));
+        this->labels.push_back(top_hypotheses[0].getClass());
 
         this->drawHypothesisToCAS(cas, cas_image_depth, view_cloud, top_hypotheses[0], this->camera);
       }
@@ -893,8 +904,6 @@ std::vector<cv::Point2f> getCannyEdges(cv::Mat &grayscale, cv::Rect &input_roi) 
   cv::Canny(gray_roi, gray_roi, otsu_thresh_val/3, otsu_thresh_val);
 
   std::vector<cv::Point2f> result;
-
-  outInfo("non Zero " << cv::countNonZero(gray_roi));
 
   for(int row = 0; row < gray_roi.rows; ++row) {
     uint8_t *ptr = gray_roi.ptr(row);

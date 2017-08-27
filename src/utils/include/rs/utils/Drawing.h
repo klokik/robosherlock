@@ -128,7 +128,7 @@ namespace Drawing {
     for (auto &bin : data) {
       float x0 = i * bin_width;
       float y0 = (1 - bin/max_val) * height;
-      auto color = (bin/max_val > level ? cv::Scalar(0, 128, 0) : cv::Scalar(0, 0, 128));
+      auto color = (bin > level ? cv::Scalar(0, 128, 0) : cv::Scalar(0, 0, 128));
       cv::rectangle(hist, cv::Rect(x0, y0, bin_width, height - y0 + 1), color, -1);
       i++;
     }

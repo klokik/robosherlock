@@ -130,7 +130,7 @@
         <nameValuePair>
             <name>applySupportPlaneAssumption</name>
             <value>
-                <boolean>false</boolean>
+                <boolean>true</boolean>
             </value>
         </nameValuePair>
         <nameValuePair>

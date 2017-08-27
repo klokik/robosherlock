@@ -102,7 +102,17 @@ class SimilarityRanking {
       };
 
       rankItems.erase(std::remove_if(rankItems.begin(), rankItems.end(), isNotLocalMaximum), rankItems.end());
+      // non-maximum supression should't remove all items from soem class, so no empty classes cleanup needed
     }
+  }
+
+  public: double getMaxScore() {
+    double max_score = std::accumulate(this->begin(), this->end(), std::numeric_limits<double>::lowest(),
+        [](const double acc, const RankingItem_t &ri) {
+          return std::max(ri.getScore(), acc);
+        });
+
+    return max_score;
   }
 
   // in l_infinity sense
@@ -130,31 +140,38 @@ class SimilarityRanking {
 
       rankItems.erase(std::remove_if(rankItems.begin(), rankItems.end(), isItemBad), rankItems.end());
     }
+
+    this->removeEmptyClasses();
   }
 
   public: std::vector<double> getHistogram() {
     std::vector<double> result;
-    for (auto sample_it = this->begin() ; sample_it != this->end(); ++sample_it)
+    for (auto sample_it = this->begin() ; sample_it != this->end(); ++sample_it) {
       result.push_back(sample_it->getScore());
+    }
 
     return result;
   }
 
   public: class Iterator : public std::iterator<std::forward_iterator_tag, RankingItem_t> {
     public: typename Container_t::iterator class_it;
+    public: typename Container_t::iterator class_it_end;
     public: typename Container_t::mapped_type::iterator sample_it;
 
     public: Iterator() = default;
 
-    public: Iterator(decltype(class_it) c_it, decltype(sample_it) s_it):
-        class_it(c_it), sample_it(s_it) {
+    public: Iterator(decltype(class_it) c_it, decltype(class_it) c_it_end, decltype(sample_it) s_it):
+        class_it(c_it), class_it_end(c_it_end), sample_it(s_it) {
     }
 
     public: Iterator &operator ++ () {
-      if (this->sample_it != this->class_it->second.end())
+      if (this->sample_it != std::prev(this->class_it->second.end()))
         ++(this->sample_it);
       else {
-        this->sample_it = (++this->class_it)->second.begin();
+        if (this->class_it != std::prev(this->class_it_end))
+          this->sample_it = (++this->class_it)->second.begin();
+        else
+          ++(this->sample_it); // go for end()
       }
 
       return *this;
@@ -187,7 +204,7 @@ class SimilarityRanking {
   public: Iterator begin() {
     assert(!this->items.empty());
 
-    return Iterator{this->items.begin(), this->items.begin()->second.begin()};
+    return Iterator{this->items.begin(), this->items.end(), this->items.begin()->second.begin()};
   }
 
   public: Iterator end() {
@@ -200,15 +217,13 @@ class SimilarityRanking {
     return it;
   }
 
-  private: double getMaxScore() {
-    double max_score = std::accumulate(this->items.begin(), this->items.end(), 0.,
-      [](const double acc, const std::pair<ClassId, std::vector<RankingItem_t>> &kv) {
-        return std::accumulate(kv.second.cbegin(), kv.second.cend(), acc,
-          [](const double acc, const RankingItem_t &ri) {
-            return std::max(ri.getScore(), acc);
-          });});
-
-    return max_score;
+  protected: void removeEmptyClasses() {
+    for(auto it = this->items.begin(); it != this->items.end();) {
+      if (it->second.size() == 0)
+        it = this->items.erase(it);
+      else
+        it = std::next(it);
+    }
   }
 
   private: class LessScoreCmp {
