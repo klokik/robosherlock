@@ -17,8 +17,8 @@
  * limitations under the License.
  */
 
-#ifndef __GEOMETRYCV_H__
-#define __GEOMETRYCV_H__
+#ifndef __GEOMETRY_CV_H__
+#define __GEOMETRY_CV_H__
 
 #include <tuple>
 #include <vector>
@@ -254,4 +254,4 @@ namespace GeometryCV {
   std::tuple<cv::Mat, double> fitProcrustes2d(const std::vector<cv::Point2f> &pts, const std::vector<cv::Point2f> &tmplt);
 }
 
-#endif /*__GEOMETRYCV_H__*/
+#endif /*__GEOMETRY_CV_H__*/

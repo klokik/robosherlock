@@ -17,8 +17,8 @@
  * limitations under the License.
  */
 
-#ifndef __SIMILARITYRANKING_H__
-#define __SIMILARITYRANKING_H__
+#ifndef __SIMILARITY_RANKING_H__
+#define __SIMILARITY_RANKING_H__
 
 #include <algorithm>
 #include <iterator>
@@ -351,4 +351,4 @@ class SimilarityRanking {
   private: Container_t items;
 };
 
-#endif /*__SIMILARITYRANKING_H__*/
+#endif /*__SIMILARITY_RANKING_H__*/
