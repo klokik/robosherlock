@@ -19,6 +19,11 @@
 
 #include <fstream>
 
+#include <sensor_msgs/CameraInfo.h>
+
+#include <rs/segmentation/ImageSegmentation.h>
+#include <rs/utils/SimilarityRanking.h>
+
 #include <rs/annotation/ContourFittingClassifier.h>
 
 
@@ -424,8 +429,8 @@ TyErrorId ContourFittingClassifier::processWithLock(CAS &tcas, ResultSpecificati
 
   this->segments.clear();
   this->fitted_silhouettes.clear();
-  this->surface_edges.clear();
-  this->surface_edges_blue.clear();
+  this->debug_points_red.clear();
+  this->debug_points_blue.clear();
   this->labels.clear();
   this->pose_hypotheses.clear();
   this->histograms.clear();
@@ -460,7 +465,7 @@ TyErrorId ContourFittingClassifier::processWithLock(CAS &tcas, ResultSpecificati
     if (innerEdges.size() == 0)
       continue;
 
-    // this->surface_edges.push_back(innerEdges);
+    // this->debug_points_red.push_back(innerEdges);
 
     ::SimilarityRanking<PoseHypothesis> poseRanking;
 
@@ -551,6 +556,9 @@ TyErrorId ContourFittingClassifier::processWithLock(CAS &tcas, ResultSpecificati
         outInfo("\tdone: distance = " << distance);
         assert(distance < 10 && distance >= 0);
         if (std::isnormal(distance)) {
+          // find new score
+          ::MeshFootprint new_fp(mesh, hyp.pose, this->camera, this->footprint_image_size, false);
+          std::tie(distance, std::ignore) = GeometryCV::getChamferDistance(new_fp.outerEdge, contour, cas_image_depth.size(), dist_transform);
           hyp.setScore(distanceToScore(distance));
           hyp.pose = new_pose;
         }
@@ -562,6 +570,9 @@ TyErrorId ContourFittingClassifier::processWithLock(CAS &tcas, ResultSpecificati
           outInfo("Running 2d-3d ICP2 ... ");
           std::tie(new_pose, distance, std::ignore) = GeometryCV::fit2d3d(edge_points_3d, hyp.pose, innerEdges, this->camera, this->icp2d3dIterationsLimit, plane_normal);
           if (std::isnormal(distance)) {
+            // find new score
+            ::MeshFootprint new_fp(mesh, hyp.pose, this->camera, this->footprint_image_size, false);
+            std::tie(distance, std::ignore) = GeometryCV::getChamferDistance(new_fp.outerEdge, contour, cas_image_depth.size(), dist_transform);
             hyp.setScore(distanceToScore(distance));
             hyp.pose = new_pose;
           }
@@ -605,7 +616,7 @@ TyErrorId ContourFittingClassifier::processWithLock(CAS &tcas, ResultSpecificati
 //////////////////////////////////////////////////
 void ContourFittingClassifier::drawImageWithLock(cv::Mat &disp) {
   cv::Mat gray;
-  cv::cvtColor(image_rgb, gray, CV_BGR2GRAY);
+  cv::cvtColor(this->image_rgb, gray, CV_BGR2GRAY);
 
   for (auto seg : this->segments) {
     auto roi = seg.rect;
@@ -635,20 +646,21 @@ void ContourFittingClassifier::drawImageWithLock(cv::Mat &disp) {
 
   cv::Mat transpR = cv::Mat::zeros(disp.size(), CV_8UC3);
   cv::Mat transpB = cv::Mat::zeros(disp.size(), CV_8UC3);
-  for (const auto &sil : this->surface_edges) {
+  for (const auto &sil : this->debug_points_red) {
     for (auto &pt : sil)
       cv::circle(transpR, pt, 1, cv::Scalar(0, 0, 255), -1);
   }
 
-  for (const auto &sil : this->surface_edges_blue) {
+  for (const auto &sil : this->debug_points_blue) {
     for (auto &pt : sil)
       cv::circle(transpB, pt, 1, cv::Scalar(255, 0, 0), -1);
   }
 
 
   for (size_t i = 0; i < this->segments.size(); ++i) {
-    auto &seg_center = segments[i].center;
-    cv::Rect hist_dst_rect(cv::Point(seg_center.x, seg_center.y + 5 + segments[i].rect.height/2), histograms[i].size());
+    auto segment = segments[i];
+    auto &seg_center = segment.center;
+    cv::Rect hist_dst_rect(cv::Point(seg_center.x, seg_center.y + 5 + segment.rect.height/2), histograms[i].size());
     hist_dst_rect = hist_dst_rect & cv::Rect(cv::Point(), disp.size());
     disp(hist_dst_rect) *= 0.5;
     cv::Rect hist_src_rect = (hist_dst_rect - hist_dst_rect.tl()) & cv::Rect(cv::Point(), histograms[i].size());

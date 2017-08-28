@@ -20,8 +20,11 @@
 #ifndef __CONTOUR_FITTING_CLASSIFIER_H__
 #define __CONTOUR_FITTING_CLASSIFIER_H__
 
+#include <map>
 #include <numeric>
 #include <set>
+#include <string>
+#include <vector>
 
 #include <uima/api.hpp>
 
@@ -29,12 +32,12 @@
 #include <ros/ros.h>
 #include <ros/package.h>
 
-#include <sensor_msgs/CameraInfo.h>
+// OpenCV
+#include <opencv2/opencv.hpp>
 
 // PCL
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-
 
 // RS
 #include <rs/types/all_types.h>
@@ -42,8 +45,6 @@
 #include <rs/utils/time.h>
 #include <rs/utils/output.h>
 #include <rs/DrawingAnnotator.h>
-#include <rs/segmentation/ImageSegmentation.h>
-#include <rs/utils/SimilarityRanking.h>
 
 #include <rs/utils/GeometryCV.h>
 #include <rs/utils/Drawing.h>
@@ -112,15 +113,14 @@ std::tuple<pcl::PointCloud<pcl::PointXYZRGBA>::Ptr, std::vector<pcl::Vertices>>
 /// \class MeshFootprint ContourFittingClassifier.cpp
 /// \brief Stores an outer silhouette of a mesh at a specific pose using given camera
 class MeshFootprint {
-public:
   /// \brief Outer silhouette of mesh
-  std::vector<cv::Point2f> outerEdge;
+  public: std::vector<cv::Point2f> outerEdge;
 
   /// \brief Surface edges of mesh
-  std::vector<cv::Point2f> innerEdges;
+  public: std::vector<cv::Point2f> innerEdges;
 
   /// \brief Pose at which footprint was created
-  ::PoseRT pose;
+  public: ::PoseRT pose;
 
   /// \brief Constructor
   /// \param[in]  mesh    A mesh of which to create a footprint
@@ -128,7 +128,7 @@ public:
   /// \param[in]  camera  Camera which is used to project points
   /// \param[in]  im_size Size of the image to rasterize image on (defines density of points)
   /// \param[in]  offset  Shift mesh before rotation to median point if true
-  MeshFootprint(const ::Mesh &mesh, const ::PoseRT &pose,
+  public: MeshFootprint(const ::Mesh &mesh, const ::PoseRT &pose,
       ::Camera &camera, const int im_size, const bool offset = true);
 };
 
@@ -187,26 +187,26 @@ class PoseHypothesis : public ::RankingItem<std::string, int> {
 ///   Repairs ViewCloud and depth map at segments provides fitted meshes poses
 class ContourFittingClassifier : public DrawingAnnotator
 {
-public:
+  friend class ContourFittingUnitTest;
+
   /// \brief Constructor
-  ContourFittingClassifier(): DrawingAnnotator(__func__) {
+  public: ContourFittingClassifier(): DrawingAnnotator(__func__) {
   }
 
   // Documentation inherited
-  TyErrorId initialize(AnnotatorContext &ctx);
+  public: TyErrorId initialize(AnnotatorContext &ctx);
 
   // Documentation inherited
-  TyErrorId destroy();
+  public: TyErrorId destroy();
 
   // Documentation inherited
-  TyErrorId processWithLock(CAS &tcas, ResultSpecification const &res_spec);
-
-protected:
-  // Documentation inherited
-  void drawImageWithLock(cv::Mat &disp);
+  public: TyErrorId processWithLock(CAS &tcas, ResultSpecification const &res_spec);
 
   // Documentation inherited
-  void fillVisualizerWithLock(pcl::visualization::PCLVisualizer &visualizer, const bool firstRun);
+  protected: void drawImageWithLock(cv::Mat &disp);
+
+  // Documentation inherited
+  protected: void fillVisualizerWithLock(pcl::visualization::PCLVisualizer &visualizer, const bool firstRun);
 
   /// \brief Write successfully classified hypothesis information to CAS
   /// \param[in,out] cas              SceneCAS
@@ -214,7 +214,7 @@ protected:
   /// \param[in,out] cas_view_cloud   PCL cloud to repair and write to CAS
   /// \param[in]     hypothesis       Hupothesis being writed
   /// \param[in]     camera           Camera used to capture CAS image data
-  void drawHypothesisToCAS(rs::SceneCas &cas, cv::Mat &cas_image_depth, pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cas_view_cloud, const ::PoseHypothesis &hypothesis, const ::Camera &camera);
+  protected: void drawHypothesisToCAS(rs::SceneCas &cas, cv::Mat &cas_image_depth, pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cas_view_cloud, const ::PoseHypothesis &hypothesis, const ::Camera &camera);
 
   /// \brief Orients mesh that way, that it's top ditection is orthogonal to support plane, and the origin point of mesh is in plane
   /// \param[in] initial_pose           Initial mesh pose
@@ -224,7 +224,7 @@ protected:
   /// \return                           A new pose for the object
   ///   Assume that object's default orientation is bottom down.
   ///   The anchor point is aligned with plane along view ray.
-  ::PoseRT alignObjectsPoseWithPlane(const ::PoseRT &initial_pose,const cv::Vec3f mesh_anchor_point,const cv::Vec3f support_plane_normal, const float support_plane_distance, ::Camera &camera, cv::Mat &jacobian);
+  protected: ::PoseRT alignObjectsPoseWithPlane(const ::PoseRT &initial_pose,const cv::Vec3f mesh_anchor_point,const cv::Vec3f support_plane_normal, const float support_plane_distance, ::Camera &camera, cv::Mat &jacobian);
 
   /// \brief Extract 3d points which corresponts to normal discontinuities visible on a mesh
   /// \param[in] mesh       Polygonal mesh
@@ -232,88 +232,85 @@ protected:
   /// \param[in] camera     Camera to rasterize mesh
   /// \param[in] image_size Size of the image to rasterize points to
   /// \return               std::vector of 3d points at default mesh's position
-  std::vector<cv::Point3f> getMeshSurfaceEdgesAtPose(const ::Mesh &mesh, const ::PoseRT &pose, const ::Camera &camera, const cv::Size image_size);
+  protected: std::vector<cv::Point3f> getMeshSurfaceEdgesAtPose(const ::Mesh &mesh, const ::PoseRT &pose, const ::Camera &camera, const cv::Size image_size);
 
-private:
   /// \brief Directory to store MeshEdgeModels at
-  std::string cache_path{"/tmp"};
+  private: std::string cache_path{"/tmp"};
 
   /// \brief Number of rotation axis samples for footprint generation
-  int rotation_axis_samples{10};
+  private: int rotation_axis_samples{10};
 
   /// \brief Number of rotation angle samples for footprint generation
-  int rotation_angle_samples{10};
+  private: int rotation_angle_samples{10};
 
   /// \brief Footprint generation image size
-  int footprint_image_size{240};
+  private: int footprint_image_size{240};
 
   /// \brief Reject all hypotheses which score is lower than value
-  float rejectScoreLevel{0.001};
+  private: float rejectScoreLevel{0.001};
 
   /// \brief Keep only hypotheses which has a score this much lower than maximum one in set
-  float normalizedAcceptScoreLevel{0.9};
+  private: float normalizedAcceptScoreLevel{0.9};
 
   /// \brief Repair CAS data if true
-  bool repairPointCloud{false};
+  private: bool repairPointCloud{false};
 
   /// \brief Draw polygon meshes if PCL visualizer if true
-  bool visualizeSolidMeshes{false};
+  private: bool visualizeSolidMeshes{false};
 
   /// \brief Refine poses using ICP if true
-  bool performICPPoseRefinement{false};
+  private: bool performICPPoseRefinement{false};
 
   /// \brief Align poses with support plane if true
-  bool applySupportPlaneAssumption{false};
+  private: bool applySupportPlaneAssumption{false};
 
   /// \brief Maximal number of iterations to run ICP for
-  int icp2d3dIterationsLimit{100};
-
+  private: int icp2d3dIterationsLimit{100};
 
   /// \brief Trained edge models for meshes
-  std::map<std::string, ::MeshEdgeModel> edge_models;
+  private: std::map<std::string, ::MeshEdgeModel> edge_models;
 
   /// \brief Currently visible segments
-  std::vector<ImageSegmentation::Segment> segments;
+  private: std::vector<ImageSegmentation::Segment> segments;
 
   /// \brief Labels for segments
-  std::vector<std::string> labels;
+  private: std::vector<std::string> labels;
 
   /// \brief Good hypotheses to visualize
-  std::vector<std::vector<::PoseHypothesis>> pose_hypotheses;
+  private: std::vector<std::vector<::PoseHypothesis>> pose_hypotheses;
 
   /// \brief Debug point set for visualisation
-  std::vector<std::vector<cv::Point2f>> fitted_silhouettes;
+  private: std::vector<std::vector<cv::Point2f>> fitted_silhouettes;
 
   /// \brief Debug point set for visualisation
-
-  std::vector<std::vector<cv::Point2f>> surface_edges;
+  private: std::vector<std::vector<cv::Point2f>> debug_points_red;
 
   /// \brief Debug point set for visualisation
-  std::vector<std::vector<cv::Point2f>> surface_edges_blue;
+  private: std::vector<std::vector<cv::Point2f>> debug_points_blue;
 
   /// \brief Histograms for hypotheses
-  std::vector<cv::Mat> histograms;
+  private: std::vector<cv::Mat> histograms;
 
   /// \brief Current RGB image resized to depth map size
-  cv::Mat image_rgb;
+  private: cv::Mat image_rgb;
 
   /// \brief Debug depth map for visualisation
-  cv::Mat distance_mat = cv::Mat(480, 640, CV_16UC1);
+  private: cv::Mat distance_mat;
 
   /// \brief Current view cloud
-  pcl::PointCloud<pcl::PointXYZRGBA>::Ptr view_cloud{new pcl::PointCloud<pcl::PointXYZRGBA>};
+  private: pcl::PointCloud<pcl::PointXYZRGBA>::Ptr view_cloud{new pcl::PointCloud<pcl::PointXYZRGBA>};
 
   /// \brief Horisontal camera lookup table
-  cv::Mat lookupX;
+  private: cv::Mat lookupX;
 
   /// \brief Vertical camera lookup table
-  cv::Mat lookupY;
+  private: cv::Mat lookupY;
 
   /// \brief Camera model of current data sample
-  ::Camera camera;
+  private: ::Camera camera;
 
   /// \brief Camera used to generate mesh footprints
-  ::Camera footprint_camera;
+  private: ::Camera footprint_camera;
 };
 
 #endif /*__CONTOUR_FITTING_CLASSIFIER_H__*/
