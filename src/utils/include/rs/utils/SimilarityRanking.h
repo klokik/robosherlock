@@ -20,8 +20,11 @@
 #ifndef __SIMILARITYRANKING_H__
 #define __SIMILARITYRANKING_H__
 
+#include <algorithm>
+#include <iterator>
 #include <set>
 #include <map>
+#include <mutex>
 #include <vector>
 
 

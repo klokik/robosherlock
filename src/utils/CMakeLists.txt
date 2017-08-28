@@ -6,6 +6,7 @@ add_library(rs_utils SHARED
   src/BlurDetector.cpp
   src/DepthImageProcessing.cpp
   src/GeometryCV.cpp
+  src/Drawing.cpp
 )
 target_link_libraries(rs_utils rs_core)
 
