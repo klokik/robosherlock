@@ -22,25 +22,38 @@
 
 using namespace uima;
 
-using Triangle = std::vector<int>;
 
+/** \struct Mesh ContourFittingClassifier.cpp
+ *  \brief Holds a polygon mesh vertices, triangles and normals
+ */
 struct Mesh {
+  /// \brief Vertices of the mesh
   std::vector<cv::Point3f> points;
-  std::vector<cv::Vec3f> normals;
-  std::vector<Triangle> triangles;
 
+  /// \brief Vertex normals, 1-1 correspondance to vertices
+  std::vector<cv::Vec3f> normals;
+
+  /// \brief Vectex indices for mesh triangles
+  std::vector<std::vector<int>> triangles;
+
+  /// \brief A median point of mesh
+  ///   Used for proper perspective on silhouettes
   cv::Point3f origin;
 
+  /// \brief Load mesh from PLY file
+  /// \param[in] filename Relative path PLY file
+  /// \return             A mesh structure if file was successfully loaded
+  ///   Throws std::invalid_argument if file was not found
   static Mesh readFromFile(std::string const &filename) {
     std::vector<cv::Point3f> points;
     std::vector<cv::Vec3f> normals;
-    std::vector<Triangle> triangles;
+    std::vector<std::vector<int>> triangles;
 
     std::string path = ros::package::getPath("robosherlock") + filename;
     std::ifstream ifs(path);
 
     if (!ifs.good())
-      throw std::runtime_error("File '"+path+"' not found");
+      throw std::invalid_argument("File '" + path + "' not found");
 
     enum class PLYSection : int { HEADER=0, VERTEX, FACE};
     std::map<PLYSection, int> counts;
@@ -117,20 +130,50 @@ struct Mesh {
   }
 };
 
-std::vector<cv::Point2f> getCannyEdges(cv::Mat &grayscale, cv::Rect &input_roi);
-void saveToFile(std::string filename, const std::vector<cv::Point3f> &pts);
+/// \brief Extracts edges from image region into an array of points
+/// \param[in] grayscale  An 8bit grayscale source image
+/// \param[in] input_roi  A region where to look for edges
+/// \return               std::vector of 2d points originating from the top-left corner of the image
+///   Threshold for canny operator is chosen automatically
+std::vector<cv::Point2f> getCannyEdges(const cv::Mat &grayscale, const cv::Rect &input_roi);
+
+/// \brief Save 3d point to pcd file (for debug purposes)
+/// \param[in] filename Path to store file to
+/// \param[in] pts      std::vector of 3d points
+void saveToFile(const std::string filename, const std::vector<cv::Point3f> &pts);
+
+/// \brief Check if lookup tables are valid, and fill-in if not
+/// \param[in]  camera  A camera object to create tables for
+/// \param[in]  size    Size of the image produced by camera
+/// \param[out] lookupX Horisontal lookup table
+/// \param[out] lookupY Vertical lookup table
+///   Lookup tables are ussed to get 3d coordinates of each observed point on image, multiplying it's value from the lookup table on depth at given point
 void checkViewCloudLookup(const ::Camera &camera, const cv::Size size, cv::Mat &lookupX, cv::Mat &lookupY);
 
-double distanceToScore(const double dist) noexcept;
+/// \brief Convert [0,infinity) distance to to a score value, which is higher if the distance is smaller
+/// \param[in] distance Some value in range (0, +infinity)
+/// \return             Score for this distance, positive for (0, 1) inputs
+double distanceToScore(const double distance) noexcept;
 
+/// \class MeshFootprint ContourFittingClassifier.cpp
+/// \brief Stores an outer silhouette of a mesh at a specific pose using given camera
 class MeshFootprint {
 public:
+  /// \brief Outer silhouette of mesh
   std::vector<cv::Point2f> outerEdge;
-  std::vector<cv::Point2f> normOuterEdge;
+
+  /// \brief Surface edges of mesh
   std::vector<cv::Point2f> innerEdges;
 
+  /// \brief Pose at which footprint was created
   ::PoseRT pose;
 
+  /// \brief Constructor
+  /// \param[in]  mesh    A mesh of which to create a footprint
+  /// \param[in]  pose    Transformation applied to mesh before projecting
+  /// \param[in]  camera  Camera which is used to project points
+  /// \param[in]  im_size Size of the image to rasterize image on (defines density of points)
+  /// \param[in]  offset  Shift mesh before rotation to median point if true
   MeshFootprint(const ::Mesh &mesh, const ::PoseRT &pose,
       ::Camera &camera, const int im_size, const bool offset = true) {
     std::vector<cv::Point3f> points_3d;
@@ -193,11 +236,8 @@ public:
     cv::Mat bounding_matrix_inv = (cv::Mat_<float>(3, 3) << 1/rate, 0, b_rect.x - marg_size/rate,
                                                             0, 1/rate, b_rect.y - marg_size/rate, 0 , 0, 1);
     std::vector<cv::Point2f> contour = GeometryCV::transform(bounding_matrix_inv, contours[0]);
-    std::vector<cv::Point2f> normalized_contour = GeometryCV::normalizePoints(contour);
 
     this->outerEdge = contour;
-    this->normOuterEdge = normalized_contour;
-
     this->pose = pose;
 
     // cv::Canny(); // TODO
@@ -205,16 +245,29 @@ public:
   }
 };
 
+/// \class MeshEdgeModel ContourFittingClassifier.cpp
+/// \brief A container for footprint samples of a specific mesh
 class MeshEdgeModel {
+  /// \brief An identifier of the mesh
   public: std::string name;
+
+  /// \brief 3d mesh
   public: ::Mesh mesh;
 
+  /// \brief Camera to create footprints with
   public: ::Camera camera;
 
+  /// \brief Create and add footprint to the model
+  /// \param[in] pose Pose to create footprint at
+  /// \param[in] size Density of footprint points
   public: void addFootprint(const ::PoseRT &pose, const size_t size) {
     this->items.emplace_back(this->mesh, pose, this->camera, size);
   }
 
+  /// \brief Automatically sample poses and add footprints to the model
+  /// \param[in] rotationAxisSamples  number of rotation axis vector samples
+  /// \param[in] rotationAngleSamples number of angle steps at each axis sample
+  /// \param[in] size                 Density of footprint points
   public: void addSampledFootprints(const size_t rotationAxisSamples, const size_t rotationAngleSamples, const size_t size) {
     auto it = std::max_element(this->mesh.points.cbegin(), this->mesh.points.cend(),
       [](const cv::Point3f &a, const cv::Point3f &b) {
@@ -239,27 +292,42 @@ class MeshEdgeModel {
     }
   }
 
-  public: void saveToFile(std::string filename);
-  public: bool loadFromFile(std::string filename);
+  /// \brief Save model to file
+  /// \param[in] filename Path to model cache file
+  public: void saveToFile(const std::string filename);
 
+  /// \brief Load model from file
+  /// \param[in] filename Path to model cache file
+  /// \return True if model loaded
+  public: bool loadFromFile(const std::string filename);
+
+  /// \brief Footprint samples in the model
   public: std::vector<MeshFootprint> items;
 };
 
+/// \class PoseHypothsis ContourFittingClassifier.cpp
+/// \brief An implementation of ::RankingItem interface containing pose data
 class PoseHypothesis : public ::RankingItem<std::string, int> {
+  /// \brief Constructor
   public: PoseHypothesis(const std::string c_id, const int s_id, const double score): 
     RankingItem<std::string, int>(c_id, s_id, score) {
   }
 
+  /// \brief A hypothesis assumes that a mesh might be at this pose
   public: ::PoseRT pose;
 };
 
+/// \class ContourFittingClassifier ContourFittingClassifier.cpp
+/// \brief Annotator which fits one of 3d meshes into a segment
+///   Repairs ViewCloud and depth map at segments provides fitted meshes poses
 class ContourFittingClassifier : public DrawingAnnotator
 {
 public:
+  /// \brief Constructor
   ContourFittingClassifier(): DrawingAnnotator(__func__) {
-
   }
 
+  // Documentation inherited
   TyErrorId initialize(AnnotatorContext &ctx) override {
     outInfo("initialize");
 
@@ -302,19 +370,21 @@ public:
     return UIMA_ERR_NONE;
   }
 
+  // Documentation inherited
   TyErrorId destroy()
   {
     outInfo("destroy");
     return UIMA_ERR_NONE;
   }
 
+  // Documentation inherited
   TyErrorId processWithLock(CAS &tcas, ResultSpecification const &res_spec) override
   {
     outInfo("process start");
     rs::StopWatch clock;
     rs::SceneCas cas(tcas);
 
-#ifndef Read_CAS_Data_Region
+    // Read CAS Data
     cv::Mat cas_image_rgb;
     cv::Mat cas_image_depth;
     cv::Mat image_grayscale;
@@ -345,7 +415,6 @@ public:
     std::vector<rs::TransparentSegment> t_segments;
     scene.identifiables.filter(t_segments);
     outInfo("Found " << t_segments.size() << " transparent segments");
-#endif
 
     this->segments.clear();
     this->fitted_silhouettes.clear();
@@ -529,6 +598,7 @@ public:
 
 
 protected:
+  // Documentation inherited
   void drawImageWithLock(cv::Mat &disp) override {
     cv::Mat gray;
     cv::cvtColor(image_rgb, gray, CV_BGR2GRAY);
@@ -593,6 +663,11 @@ protected:
     disp += transpR + transpB;
   }
 
+  /// \brief Create a PCL mesh from ::Mesh (used for visualisation purposes)
+  /// \param[in]  mesh  Polygon mesh
+  /// \param[in]  trans Affine transformation 3x4 matrix
+  /// \param[in]  tint  Value in [0,1] range to set surface color to
+  /// \return           A tuple (cloud, indices) which could be used for PCLVisualiser::addPolygonMesh()
   static std::tuple<pcl::PointCloud<pcl::PointXYZRGBA>::Ptr, std::vector<pcl::Vertices>>
     meshToPCLMesh(const ::Mesh &mesh, const cv::Mat &trans, const float tint) {
     std::vector<pcl::Vertices> polygons;
@@ -628,6 +703,7 @@ protected:
     return std::tie(cloud, polygons);
   }
 
+  // Documentation inherited
   void fillVisualizerWithLock(pcl::visualization::PCLVisualizer &visualizer, const bool firstRun) override
   {
     const std::string &cloudname = "ContourFittingClassifier";
@@ -665,7 +741,13 @@ protected:
     }
   }
 
-  void drawHypothesisToCAS(rs::SceneCas &cas, cv::Mat &cas_image_depth, pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cas_view_cloud, ::PoseHypothesis &hypothesis, const ::Camera &camera) {
+  /// \brief Write successfully classified hypothesis information to CAS
+  /// \param[in,out] cas              SceneCAS
+  /// \param[in,out] cas_image_depth  Depth map to repair and write to CAS
+  /// \param[in,out] cas_view_cloud   PCL cloud to repair and write to CAS
+  /// \param[in]     hypothesis       Hupothesis being writed
+  /// \param[in]     camera           Camera used to capture CAS image data
+  void drawHypothesisToCAS(rs::SceneCas &cas, cv::Mat &cas_image_depth, pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cas_view_cloud, const ::PoseHypothesis &hypothesis, const ::Camera &camera) {
     auto &mesh = this->edge_models[hypothesis.getClass()].mesh;
 
     cv::Mat depth_map = cv::Mat::ones(cas_image_depth.size(), CV_32FC1) * Drawing::max_depth_32f;
@@ -708,9 +790,15 @@ protected:
     cas_image_depth.copyTo(this->distance_mat);
   }
 
-  // Assume that object's default orientation is bottom down, with origin point at zero;
-  // returns a new pose for the object
-  ::PoseRT alignObjectsPoseWithPlane(::PoseRT initial_pose, cv::Vec3f mesh_anchor_point, cv::Vec3f support_plane_normal, const float support_plane_distance, ::Camera &camera, cv::Mat &jacobian) {
+  /// \brief Orients mesh that way, that it's top ditection is orthogonal to support plane, and the origin point of mesh is in plane
+  /// \param[in] initial_pose           Initial mesh pose
+  /// \param[in] mesh_anchor_point      A point in local meshes coordinates which is put on the plane
+  /// \param[in] support_plane_normal   A vector orthogonal to plane
+  /// \param[in] support_plane_distance A free term of plane equation
+  /// \return                           A new pose for the object
+  ///   Assume that object's default orientation is bottom down.
+  ///   The anchor point is aligned with plane along view ray.
+  ::PoseRT alignObjectsPoseWithPlane(const ::PoseRT &initial_pose,const cv::Vec3f mesh_anchor_point,const cv::Vec3f support_plane_normal, const float support_plane_distance, ::Camera &camera, cv::Mat &jacobian) {
     auto spd = support_plane_distance;
 
     // find anchor point
@@ -800,6 +888,12 @@ protected:
     return aligned_to_plane_objects_pose;
   }
 
+  /// \brief Extract 3d points which corresponts to normal discontinuities visible on a mesh
+  /// \param[in] mesh       Polygonal mesh
+  /// \param[in] pose       Pose the mesh is observed at
+  /// \param[in] camera     Camera to rasterize mesh
+  /// \param[in] image_size Size of the image to rasterize points to
+  /// \return               std::vector of 3d points at default mesh's position
   std::vector<cv::Point3f> getMeshSurfaceEdgesAtPose(const ::Mesh &mesh, const ::PoseRT &pose, const ::Camera &camera, const cv::Size image_size) {
     cv::Mat z_buffer = cv::Mat::ones(image_size, CV_32FC1) * Drawing::max_depth_32f;
     cv::Mat normal_map = cv::Mat::zeros(image_size, CV_32FC3);
@@ -852,42 +946,88 @@ protected:
   }
 
 private:
+  /// \brief Directory to store MeshEdgeModels at
   std::string cache_path{"/tmp"};
+
+  /// \brief Number of rotation axis samples for footprint generation
   int rotation_axis_samples{10};
+
+  /// \brief Number of rotation angle samples for footprint generation
   int rotation_angle_samples{10};
+
+  /// \brief Footprint generation image size
   int footprint_image_size{240};
 
+  /// \brief Reject all hypotheses which score is lower than value
   float rejectScoreLevel{0.001};
+
+  /// \brief Keep only hypotheses which has a score this much lower than maximum one in set
   float normalizedAcceptScoreLevel{0.9};
+
+  /// \brief Repair CAS data if true
   bool repairPointCloud{false};
+
+  /// \brief Draw polygon meshes if PCL visualizer if true
   bool visualizeSolidMeshes{false};
+
+  /// \brief Refine poses using ICP if true
   bool performICPPoseRefinement{false};
+
+  /// \brief Align poses with support plane if true
   bool applySupportPlaneAssumption{false};
 
+  /// \brief Maximal number of iterations to run ICP for
   int icp2d3dIterationsLimit{100};
 
+
+  /// \brief Trained edge models for meshes
   std::map<std::string, ::MeshEdgeModel> edge_models;
 
+  /// \brief Currently visible segments
   std::vector<ImageSegmentation::Segment> segments;
-  std::vector<std::vector<::PoseHypothesis>> pose_hypotheses;
-  std::vector<std::vector<cv::Point2f>> fitted_silhouettes;
-  std::vector<std::vector<cv::Point2f>> surface_edges;
-  std::vector<std::vector<cv::Point2f>> surface_edges_blue;
+
+  /// \brief Labels for segments
   std::vector<std::string> labels;
+
+  /// \brief Good hypotheses to visualize
+  std::vector<std::vector<::PoseHypothesis>> pose_hypotheses;
+
+  /// \brief Debug point set for visualisation
+  std::vector<std::vector<cv::Point2f>> fitted_silhouettes;
+
+  /// \brief Debug point set for visualisation
+
+  std::vector<std::vector<cv::Point2f>> surface_edges;
+
+  /// \brief Debug point set for visualisation
+  std::vector<std::vector<cv::Point2f>> surface_edges_blue;
+
+  /// \brief Histograms for hypotheses
   std::vector<cv::Mat> histograms;
 
+  /// \brief Current RGB image resized to depth map size
   cv::Mat image_rgb;
+
+  /// \brief Debug depth map for visualisation
   cv::Mat distance_mat = cv::Mat(480, 640, CV_16UC1);
 
-  cv::Mat lookupX;
-  cv::Mat lookupY;
+  /// \brief Current view cloud
   pcl::PointCloud<pcl::PointXYZRGBA>::Ptr view_cloud{new pcl::PointCloud<pcl::PointXYZRGBA>};
 
+  /// \brief Horisontal camera lookup table
+  cv::Mat lookupX;
+
+  /// \brief Vertical camera lookup table
+  cv::Mat lookupY;
+
+  /// \brief Camera model of current data sample
   ::Camera camera;
+
+  /// \brief Camera used to generate mesh footprints
   ::Camera footprint_camera;
 };
 
-std::vector<cv::Point2f> getCannyEdges(cv::Mat &grayscale, cv::Rect &input_roi) {
+std::vector<cv::Point2f> getCannyEdges(const cv::Mat &grayscale, const cv::Rect &input_roi) {
   auto roi = input_roi;
 
   constexpr int margin = 5;
@@ -916,7 +1056,7 @@ std::vector<cv::Point2f> getCannyEdges(cv::Mat &grayscale, cv::Rect &input_roi) 
   return result;
 }
 
-void saveToFile(std::string filename, const std::vector<cv::Point3f> &pts) {
+void saveToFile(const std::string filename, const std::vector<cv::Point3f> &pts) {
   std::ofstream ofs(filename);
 
   ofs << "VERSION .7\n"
@@ -962,8 +1102,8 @@ void checkViewCloudLookup(const ::Camera &camera, const cv::Size size, cv::Mat &
   }
 }
 
-double distanceToScore(const double dist) noexcept {
-  return -std::log(dist);
+double distanceToScore(const double distance) noexcept {
+  return -std::log(distance);
 }
 
 // This macro exports an entry point that is used to create the annotator.
