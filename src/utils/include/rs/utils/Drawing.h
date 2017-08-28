@@ -2,10 +2,21 @@
 
 #include <rs/utils/GeometryCV.h>
 
+
+/// \namespace Drawing Drawing.h
+/// \brief Helper drawing functions contains in this namespace
 namespace Drawing {
+  /// \brief Maximum z_buffer value for 16bit integer depth
   constexpr uint16_t max_depth_16u = std::numeric_limits<uint16_t>::max();
+
+  /// \brief Maximum z_buffer value for float single-precision depth
   constexpr float max_depth_32f = std::numeric_limits<float>::max();
 
+  /// \brief Draw an interpolated triangle with depth test
+  /// \param[in,out] z_buffer   Floating point depth buffer
+  /// \param[in,out] dst        Optional image to write interpolated values
+  /// \param[in]     poly       3 vertices to draw
+  /// \param[in]     vals       Optional 3 values to interpolate and write to `dst`
   template <typename C_t>
   void drawTriangleInterp(cv::Mat &z_buffer, cv::Mat &dst, const std::vector<cv::Point3f> &poly, const std::vector<C_t> &vals) {
     int min_x = std::max(0, (int)std::floor(std::min(std::min(poly[0].x, poly[1].x), poly[2].x)));
@@ -45,6 +56,14 @@ namespace Drawing {
       }
   }
 
+  /// \brief Rasterise a mesh and draw only depth buffer
+  /// \param[in,out]  dst_32fc1  Floating point z-buffer, initialised to max_depth_*
+  /// \param[in]      points     3d vertices
+  /// \param[in]      indices    Triangle indices
+  /// \param[in]      rot        Vertice rotation vector (rodrigues)
+  /// \param[in]      trans      Vertice translation vector
+  /// \param[in]      cam        Pinhole camera matrix
+  /// \param[in]      ks         Camera distortion coefficients
   void drawMeshDepth(
       cv::Mat &dst_32fc1,
       const std::vector<cv::Point3f> &points,
@@ -78,6 +97,16 @@ namespace Drawing {
     }
   }
 
+  /// \brief Rasterise a mesh and draw depth buffer and normals
+  /// \param[in,out]  dst_32fc1  Floating point z-buffer, initialised to max_depth_*
+  /// \param[in]      points     3d vertices
+  /// \param[in]      normals    Vertex normals
+  /// \param[in]      indices    Triangle indices
+  /// \param[in]      rot        Vertice rotation vector (rodrigues)
+  /// \param[in]      trans      Vertice translation vector
+  /// \param[in]      cam        Pinhole camera matrix
+  /// \param[in]      ks         Camera distortion coefficients
+  /// \param[in]      flat       Use flat shading (single normal per triangle)
   void drawMeshNormals(
       cv::Mat &dst_depth_32fc1,
       cv::Mat &dst_32fc3,
@@ -118,6 +147,12 @@ namespace Drawing {
     }
   }
 
+  /// \brief Draw histogram image
+  /// \param[in] data       Vector of double values
+  /// \param[in] bin_width  Width in px of single value column
+  /// \param[in] height     Output image height
+  /// \param[in] level      Color bins higher and lower than this value in different colors
+  /// \return               Image with drawn histogram on it
   cv::Mat drawHistogram(const std::vector<double> &data, const int bin_width, const int height, const double level = 0.) {
     int bins_num = data.size();
     cv::Mat hist = cv::Mat::zeros(height, bins_num*bin_width, CV_8UC3);
