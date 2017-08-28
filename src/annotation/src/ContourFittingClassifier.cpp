@@ -26,12 +26,18 @@
 #include <ros/ros.h>
 #include <ros/package.h>
 
+#include <sensor_msgs/CameraInfo.h>
+
+// PCL
+#include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
-//RS
+
+// RS
 #include <rs/types/all_types.h>
 #include <rs/scene_cas.h>
 #include <rs/utils/time.h>
+#include <rs/utils/output.h>
 #include <rs/DrawingAnnotator.h>
 #include <rs/segmentation/ImageSegmentation.h>
 #include <rs/utils/SimilarityRanking.h>
