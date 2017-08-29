@@ -58,8 +58,8 @@ class Camera {
   public: std::vector<float> distortion;
 
   /// \brief Set camera parameters from ROS message
-  /// \param[in] camInfo Camera parameters message
-  public: void setFromMsgs(const sensor_msgs::CameraInfo &camInfo);
+  /// \param[in]  cameraInfo Camera parameters message
+  public: void setFromMsgs(const sensor_msgs::CameraInfo &cameraInfo);
 };
 
 /// \namespace GeometryCV GeometryCV.h
@@ -71,8 +71,8 @@ namespace GeometryCV {
   cv::Mat poseRTToAffine(const ::PoseRT &pose);
 
   /// \brief Per-component pose addition
-  /// \param[in] a First addendum
-  /// \param[in] b Second addendum
+  /// \param[in] a  First addendum
+  /// \param[in] b  Second addendum
   inline ::PoseRT operator+(const ::PoseRT &a, const ::PoseRT &b) {
     ::PoseRT result;
 
@@ -83,10 +83,11 @@ namespace GeometryCV {
   }
 
   /// \brief Per-component pose multiplication
-  /// \param[in] a Scalar multiplier
-  /// \param[in] b Pose
-  /// \return      scaled pose
-  ///   Translation is scaled along translation vector, rotation angle is scaled along the same axis
+  /// \param[in] a  Scalar multiplier
+  /// \param[in] b  Pose
+  /// \return       Scaled pose
+  ///   Translation is scaled along translation vector,
+  ///   rotation angle is scaled along the same axis
   inline ::PoseRT operator*(const double a, const ::PoseRT &b) {
     ::PoseRT result;
 
@@ -109,9 +110,9 @@ namespace GeometryCV {
   cv::Point3f transform(const cv::Mat &M, const cv::Point3f &pt);
 
   /// \brief Apply affine transformation to vector
-  /// \param[in] M   3x4 matrix
-  /// \param[in] vec Vector
-  /// \return        Transformed vector
+  /// \param[in] M    3x4 matrix
+  /// \param[in] vec  Vector
+  /// \return         Transformed vector
   cv::Vec3f transform(const cv::Mat &M, const cv::Vec3f &vec);
 
   /// \brief Apply ::PoseRT transformation to point
@@ -126,34 +127,38 @@ namespace GeometryCV {
   cv::Vec3f transform(const ::PoseRT &pose, const cv::Vec3f &vec);
 
   /// \brief Apply affine transformation to points
-  /// \param[in] M    2x3 matrix
-  /// \param[in] pts  Points
-  /// \return         Transformed points
-  std::vector<cv::Point2f> transform(const cv::Mat &M, const std::vector<cv::Point2f> &pts);
+  /// \param[in] M      2x3 matrix
+  /// \param[in] points Points
+  /// \return           Transformed points
+  std::vector<cv::Point2f> transform(const cv::Mat &M,
+                                     const std::vector<cv::Point2f> &points);
 
   /// \brief Apply affine transformation to points
-  /// \param[in] M    2x3 matrix
-  /// \param[in] pts  Points
-  /// \return         Transformed points
-  std::vector<cv::Point2f> transform(const cv::Mat &M, const std::vector<cv::Point2i> &pts);
+  /// \param[in] M      2x3 matrix
+  /// \param[in] points Points
+  /// \return           Transformed points
+  std::vector<cv::Point2f> transform(const cv::Mat &M,
+                                     const std::vector<cv::Point2i> &points);
 
   /// \brief Apply affine transformation to points
   /// \param[in] M      3x4 matrix
   /// \param[in] points Points
   /// \return           Transformed points
-  std::vector<cv::Point3f> transform(const cv::Mat &M, const std::vector<cv::Point3f> &points);
+  std::vector<cv::Point3f> transform(const cv::Mat &M,
+                                     const std::vector<cv::Point3f> &points);
 
   /// \brief Apply affine transformation to vectors
   /// \param[in] M       3x4 matrix
   /// \param[in] vectors Points
   /// \return            Transformed vectors
-  std::vector<cv::Vec3f> transform(const cv::Mat &M, const std::vector<cv::Vec3f> &vectors);
+  std::vector<cv::Vec3f> transform(const cv::Mat &M,
+                                   const std::vector<cv::Vec3f> &vectors);
 
   /// \brief Get floating point bounding rect for a set of points
-  /// \param[in] pts Vector of points
-  /// \return        Rectangle which contains all the points from input
+  /// \param[in] points Vector of points
+  /// \return           Rectangle which contains all the points from input
   ///    Starting from some OpenCV version (like 2.4.8) function is present in cv ns.
-  cv::Rect_<float> getBoundingRect(const std::vector<cv::Point2f> &pts);
+  cv::Rect_<float> getBoundingRect(const std::vector<cv::Point2f> &points);
 
   /// \brief Create KdTree for a set of points
   /// \param[in] points Points to create KdTree on
@@ -164,94 +169,116 @@ namespace GeometryCV {
   /// \param[in] template_kd_tree Search template as KdTree
   /// \param[in] pt               Input point
   /// \return                     Nearest point from the set to the input `pt`
-  cv::Point2f getNearestPoint(pcl::search::KdTree<pcl::PointXY> &template_kdtree, const cv::Point2f &pt);
+  cv::Point2f getNearestPoint(pcl::search::KdTree<pcl::PointXY> &templateKdTree,
+                              const cv::Point2f &pt);
 
   /// \brief Find the distance of each 2d point to template, and weights which mark outliers
-  /// \param[in] data             N Input points
-  /// \param[in] template_kdtree  Template as KdTree
-  /// \return                     Tuple (residuals[Nx1], weights[Nx1])
-  std::tuple<cv::Mat, cv::Mat> compute2dDisparityResidualsAndWeights(const std::vector<cv::Point2f> &data, pcl::search::KdTree<pcl::PointXY> &template_kdtree);
+  /// \param[in] data           N Input points
+  /// \param[in] templateKdTree Template as KdTree
+  /// \return                   Tuple (residuals[Nx1], weights[Nx1])
+  std::tuple<cv::Mat, cv::Mat> compute2dDisparityResidualsAndWeights(
+      const std::vector<cv::Point2f> &data,
+      pcl::search::KdTree<pcl::PointXY> &templateKdTree);
 
   /// \brief Shortcut to project transformed points using camera
   /// \param[in] points 3D points
   /// \param[in] pose   Points transformation
   /// \param[in] camera Projection camera
   /// \return           2D points
-  std::vector<cv::Point2f> projectPoints(const std::vector<cv::Point3f> &points, const ::PoseRT &pose, const ::Camera &camera);
+  std::vector<cv::Point2f> projectPoints(const std::vector<cv::Point3f> &points,
+                                         const ::PoseRT &pose,
+                                         const ::Camera &camera);
 
   /// \brief Get the most similar rotation but along another axis
-  /// \param[in] rodrigues Input rotation
-  /// \param[in] axis      New rotation axis
-  /// \return              New rodrigues rotation
-  cv::Vec3f projectRotationOnAxis(const cv::Vec3f &rodrigues, const cv::Vec3f &axis);
+  /// \param[in] rodrigues  Input rotation
+  /// \param[in] axis       New rotation axis
+  /// \return               New rodrigues rotation
+  cv::Vec3f projectRotationOnAxis(const cv::Vec3f &rodrigues,
+                                  const cv::Vec3f &axis);
 
   /// \brief Offset pose along some single axis by given value
   /// \param[in] input  Initial pose
-  /// \param[in] dof_id Index of DOF in range [0,5]
+  /// \param[in] dofId Index of DOF in range [0,5]
   /// \param[in] offset Offset to apply to given DOF
   /// \return           New pose
-  ::PoseRT offsetPose(const ::PoseRT &input, const int dof_id, const float offset);
+  ::PoseRT offsetPose(const ::PoseRT &input, const int dofId,
+                      const float offset);
 
   /// \brief Compute Jacobian of pose to residuals transformation
   /// \param[in] pose        Point to compute jacobi matrix at
-  /// \param[in] points_3d   3d points to project
+  /// \param[in] points3D    3d points to project
   /// \param[in] h           Transformation axis delta
-  /// \param[in] template_2d 2D template
+  /// \param[in] template2D  2D template
   /// \param[in] weights     Outliers mask
   /// \param[in] camera      Camera to project 3d points
   /// \return                Jacobi Nx6 matrix
-  cv::Mat computeProximityJacobianForPoseRT(const ::PoseRT &pose, const std::vector<cv::Point3f> &points_3d, const float h, const std::vector<cv::Point2f> &template_2d, const cv::Mat &weights, const ::Camera &camera);
+  cv::Mat computeProximityJacobianForPoseRT(const ::PoseRT &pose,
+      const std::vector<cv::Point3f> &points3D, const float h,
+      const std::vector<cv::Point2f> &template2D,
+      const cv::Mat &weights, const ::Camera &camera);
 
   /// \brief Find a better pose to match points on projection using ICP algorithm
-  /// \param[in] points      Input 3d points
-  /// \param[in] init_pose   Initial pose to refine
-  /// \param[in] template_2d 2d template to fit
-  /// \param[in] camera      Camera to project points
-  /// \param[in] iterations_limit  Maximal number of iterations to perform
-  /// \param[in] normal_constraint Normalised vector, if != 0 then at each iteration pose is aligned with normal
-  /// \return                      Tuple (refinedPose, distance, lastJacobian)
-  std::tuple<::PoseRT, double, cv::Mat> fit2d3d(const std::vector<cv::Point3f> &points, const ::PoseRT &init_pose,
-      const std::vector<cv::Point2f> &template_2d, const ::Camera &camera, const size_t iterations_limit, cv::Vec3f normal_constraint = cv::Vec3f(0, 0, 0));
+  /// \param[in] points           Input 3d points
+  /// \param[in] init_pose        Initial pose to refine
+  /// \param[in] template2D       2d template to fit
+  /// \param[in] camera           Camera to project points
+  /// \param[in] iterationsLimit Maximal number of iterations to perform
+  /// \param[in] normalConstraint Normalised vector, if != 0 then at each iteration pose is aligned with normal
+  /// \return                     Tuple (refinedPose, distance, lastJacobian)
+  std::tuple<::PoseRT, double, cv::Mat> fit2d3d(
+      const std::vector<cv::Point3f> &points, const ::PoseRT &init_pose,
+      const std::vector<cv::Point2f> &template2D, const ::Camera &camera,
+      const size_t iterationsLimit,
+      cv::Vec3f normalConstraint = cv::Vec3f(0, 0, 0));
 
   /// \brief Calculate distance between two 2d point sets using distance transform
-  /// \param[in] a                  First point set
-  /// \param[in] b                  Template point set
-  /// \param[in] work_area          Size of the area to perform distance transform on
-  /// \param[in,out] dist_transform Matrix with computed distance transform (will be calculated if empty)
-  /// \return                       Tuple (distance, rate_of_points_hit)
-  std::tuple<double, double> getChamferDistance(std::vector<cv::Point2f> &a, std::vector<cv::Point2f> &b, cv::Size work_area, cv::Mat &dist_transform);
+  /// \param[in] a                      First point set
+  /// \param[in] b                      Template point set
+  /// \param[in] workArea               Size of the area to perform distance transform on
+  /// \param[in,out] distanceTransform  Matrix with computed distance transform (will be calculated if empty)
+  /// \return                           Tuple (distance, rate_of_points_hit)
+  std::tuple<double, double> getChamferDistance(
+      const std::vector<cv::Point2f> &a, const std::vector<cv::Point2f> &b,
+      const cv::Size workArea, cv::Mat &distanceTransform);
 
   /// \brief Unbias the point set and scale such that it's standard deviation is one
-  /// \param[in] pts Input point set
-  /// \return        A new point set
-  std::vector<cv::Point2f> normalizePoints(const std::vector<cv::Point2f> &pts);
+  /// \param[in] points Input point set
+  /// \return           A new point set
+  std::vector<cv::Point2f> normalizePoints(
+      const std::vector<cv::Point2f> &points);
 
   /// \breaf Copy points from std::vector to pcl::PointCloud
-  /// \param[in]  points Input cv points
-  /// \param[out] pc     PointCloud to store points to
-  void vectorToPointCloud(const std::vector<cv::Point2f> &points, pcl::PointCloud<pcl::PointXYZ> &pc);
+  /// \param[in]  points  Input cv points
+  /// \param[out] pc      PointCloud to store points to
+  void vectorToPointCloud(const std::vector<cv::Point2f> &points,
+      pcl::PointCloud<pcl::PointXYZ> &pc);
 
   /// \breaf Copy points from std::vector to pcl::PointCloud
-  /// \param[in]  pc     Input PointCloud
-  /// \param[out] points std::vector to store cv points to
-  void pointCloudToVector(pcl::PointCloud<pcl::PointXYZ> &pc, std::vector<cv::Point2f> &points);
+  /// \param[in]  pc      Input PointCloud
+  /// \param[out] points  std::vector to store cv points to
+  void pointCloudToVector(pcl::PointCloud<pcl::PointXYZ> &pc,
+      std::vector<cv::Point2f> &points);
 
   /// \brief Fit rigid point set onto template and get corresponding transformation
-  /// \param[in] test  Point set
-  /// \param[in] model Template to fit points on
-  /// \return          Tuple (affine[2x3], fitnessDistance)
-  std::tuple<cv::Mat, double> fitICP(const std::vector<cv::Point2f> &test, const std::vector<cv::Point2f> &model);
+  /// \param[in] test   Point set
+  /// \param[in] model  Template to fit points on
+  /// \return           Tuple (affine[2x3], fitnessDistance)
+  std::tuple<cv::Mat, double> fitICP(const std::vector<cv::Point2f> &test,
+      const std::vector<cv::Point2f> &model);
 
   /// \brief Get mean and standard deviation of point set
-  /// \param[in] pts Input point set
-  /// \return        Tuple (mean, stdDev)
-  std::tuple<cv::Vec2f, float> getMeanAndStdDev(const std::vector<cv::Point2f> &pts);
+  /// \param[in] points Input point set
+  /// \return           Tuple (mean, stdDev)
+  std::tuple<cv::Vec2f, float> getMeanAndStdDev(
+      const std::vector<cv::Point2f> &points);
 
   /// \brief Find 2d affine transformation to fit one point set to another
-  /// \param[in] pts  Input point set
-  /// \param[in] tmpl Template to fit
+  /// \param[in] points         Input point set
+  /// \param[in] templatePoints Template to fit
   /// \return         Tuple (affine[2x3], fitnessDistance)
-  std::tuple<cv::Mat, double> fitProcrustes2d(const std::vector<cv::Point2f> &pts, const std::vector<cv::Point2f> &tmplt);
+  std::tuple<cv::Mat, double> fitProcrustes2d(
+      const std::vector<cv::Point2f> &points,
+      const std::vector<cv::Point2f> &templatePoints);
 }
 
 #endif /*__GEOMETRY_CV_H__*/

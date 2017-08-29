@@ -26,27 +26,28 @@
 
 
 //////////////////////////////////////////////////
-void Camera::setFromMsgs(const sensor_msgs::CameraInfo &camInfo) {
+void Camera::setFromMsgs(const sensor_msgs::CameraInfo &cameraInfo)
+{
   float *it = this->matrix.ptr<float>(0);
   for (size_t i = 0; i < 9; ++i, ++it)
-    *it = camInfo.K[i];
+    *it = cameraInfo.K[i];
 
   distortion.clear();
-  for(size_t i = 0; i < camInfo.D.size(); ++i)
-    this->distortion.push_back(camInfo.D[i]);
+  for(size_t i = 0; i < cameraInfo.D.size(); ++i)
+    this->distortion.push_back(cameraInfo.D[i]);
 }
 
 namespace GeometryCV {
 //////////////////////////////////////////////////
 cv::Mat poseRTToAffine(const ::PoseRT &pose) {
-  cv::Mat affine_3d_transform(3, 4, CV_32FC1);
+  cv::Mat affine3DTransformation(3, 4, CV_32FC1);
 
-  cv::Rodrigues(pose.rot, affine_3d_transform.colRange(0, 3));
-  affine_3d_transform.at<float>(0, 3) = pose.trans(0);
-  affine_3d_transform.at<float>(1, 3) = pose.trans(1);
-  affine_3d_transform.at<float>(2, 3) = pose.trans(2);
+  cv::Rodrigues(pose.rot, affine3DTransformation.colRange(0, 3));
+  affine3DTransformation.at<float>(0, 3) = pose.trans(0);
+  affine3DTransformation.at<float>(1, 3) = pose.trans(1);
+  affine3DTransformation.at<float>(2, 3) = pose.trans(2);
 
-  return affine_3d_transform;
+  return affine3DTransformation;
 }
 
 //////////////////////////////////////////////////
@@ -73,7 +74,9 @@ cv::Point3f transform(const cv::Mat &M, const cv::Point3f &pt) {
 
   cv::Mat dst = M * vec;
 
-  return cv::Point3f(dst.at<float>(0, 0), dst.at<float>(1, 0), dst.at<float>(2, 0));
+  return cv::Point3f(dst.at<float>(0, 0),
+                     dst.at<float>(1, 0),
+                     dst.at<float>(2, 0));
 }
 
 //////////////////////////////////////////////////
@@ -98,20 +101,24 @@ cv::Vec3f transform(const ::PoseRT &pose, const cv::Vec3f &vec) {
 }
 
 //////////////////////////////////////////////////
-std::vector<cv::Point2f> transform(const cv::Mat &M, const std::vector<cv::Point2f> &pts) {
+std::vector<cv::Point2f> transform(const cv::Mat &M,
+                                   const std::vector<cv::Point2f> &points)
+{
   std::vector<cv::Point2f> result;
 
-  for (const auto &pt : pts)
+  for (const auto &pt : points)
     result.push_back(transform(M, pt));
 
   return result;
 }
 
 //////////////////////////////////////////////////
-std::vector<cv::Point2f> transform(const cv::Mat &M, const std::vector<cv::Point2i> &pts) {
+std::vector<cv::Point2f> transform(const cv::Mat &M,
+                                   const std::vector<cv::Point2i> &points)
+{
   std::vector<cv::Point2f> result;
 
-  for (const auto &pt : pts) {
+  for (const auto &pt : points) {
     cv::Point2f ptf(pt.x, pt.y);
 
     result.push_back(transform(M, ptf));
@@ -121,7 +128,9 @@ std::vector<cv::Point2f> transform(const cv::Mat &M, const std::vector<cv::Point
 }
 
 //////////////////////////////////////////////////
-std::vector<cv::Point3f> transform(const cv::Mat &M, const std::vector<cv::Point3f> &points) {
+std::vector<cv::Point3f> transform(const cv::Mat &M,
+                                   const std::vector<cv::Point3f> &points)
+{
   std::vector<cv::Point3f> result;
   result.reserve(points.size());
 
@@ -132,7 +141,8 @@ std::vector<cv::Point3f> transform(const cv::Mat &M, const std::vector<cv::Point
 }
 
 //////////////////////////////////////////////////
-std::vector<cv::Vec3f> transform(const cv::Mat &M, const std::vector<cv::Vec3f> &vectors) {
+std::vector<cv::Vec3f> transform(const cv::Mat &M,
+                                 const std::vector<cv::Vec3f> &vectors) {
   std::vector<cv::Vec3f> result;
   result.reserve(vectors.size());
 
@@ -143,72 +153,82 @@ std::vector<cv::Vec3f> transform(const cv::Mat &M, const std::vector<cv::Vec3f> 
 }
 
 //////////////////////////////////////////////////
-cv::Rect_<float> getBoundingRect(const std::vector<cv::Point2f> &pts) {
-  cv::Rect_<float> b_rect;
+cv::Rect_<float> getBoundingRect(const std::vector<cv::Point2f> &points)
+{
+  cv::Rect_<float> pointsBoundingRect;
 
-  auto h_it = std::minmax_element(pts.cbegin(), pts.cend(),
+  auto h_it = std::minmax_element(points.cbegin(), points.cend(),
     [](const cv::Point2f &a, const cv::Point2f &b) {
       return a.x < b.x;});
-  auto v_it = std::minmax_element(pts.cbegin(), pts.cend(),
+  auto v_it = std::minmax_element(points.cbegin(), points.cend(),
     [](const cv::Point2f &a, const cv::Point2f &b) {
       return a.y < b.y;});
 
-  b_rect.x = h_it.first->x;
-  b_rect.y = v_it.first->y;
-  b_rect.width = h_it.second->x - b_rect.x;
-  b_rect.height = v_it.second->y - b_rect.y;
+  pointsBoundingRect.x = h_it.first->x;
+  pointsBoundingRect.y = v_it.first->y;
+  pointsBoundingRect.width = h_it.second->x - pointsBoundingRect.x;
+  pointsBoundingRect.height = v_it.second->y - pointsBoundingRect.y;
 
-  return b_rect;
+  return pointsBoundingRect;
 }
 
 //////////////////////////////////////////////////
-pcl::search::KdTree<pcl::PointXY> getKdTree(const std::vector<cv::Point2f> &points) {
-  pcl::PointCloud<pcl::PointXY>::Ptr input_cloud {new pcl::PointCloud<pcl::PointXY>};
+pcl::search::KdTree<pcl::PointXY> getKdTree(
+    const std::vector<cv::Point2f> &points)
+{
+  pcl::PointCloud<pcl::PointXY>::Ptr inputCloud{
+      new pcl::PointCloud<pcl::PointXY>};
 
-  input_cloud->width = points.size();
-  input_cloud->height = 1;
-  input_cloud->is_dense = false;
+  inputCloud->width = points.size();
+  inputCloud->height = 1;
+  inputCloud->is_dense = false;
 
-  input_cloud->points.resize(input_cloud->width * input_cloud->height);
+  inputCloud->points.resize(inputCloud->width * inputCloud->height);
 
-  for(size_t i = 0; i < input_cloud->size(); ++i) {
-    input_cloud->points[i] = {points[i].x, points[i].y};
+  for(size_t i = 0; i < inputCloud->size(); ++i) {
+    inputCloud->points[i] = {points[i].x, points[i].y};
   }
 
-  pcl::search::KdTree<pcl::PointXY> kdtree(false);
+  pcl::search::KdTree<pcl::PointXY> kdTree(false);
 
-  kdtree.setInputCloud(input_cloud);
+  kdTree.setInputCloud(inputCloud);
 
-  return kdtree;
+  return kdTree;
 }
 
 //////////////////////////////////////////////////
-cv::Point2f getNearestPoint(pcl::search::KdTree<pcl::PointXY> &template_kdtree, const cv::Point2f &pt) {
-  pcl::PointXY search_point = {pt.x, pt.y};
+cv::Point2f getNearestPoint(pcl::search::KdTree<pcl::PointXY> &templateKdTree,
+                            const cv::Point2f &pt)
+{
+  pcl::PointXY searchPoint = {pt.x, pt.y};
 
   std::vector<int> indices;
-  std::vector<float> l2_sqr_distances;
+  std::vector<float> l2SqrDistances;
 
-  assert(template_kdtree.nearestKSearch(search_point, 1, indices, l2_sqr_distances) == 1);
+  templateKdTree.nearestKSearch(searchPoint, 1, indices, l2SqrDistances);
 
-  auto cloud = template_kdtree.getInputCloud();
+  auto cloud = templateKdTree.getInputCloud();
   auto out_pt = cloud->points[indices.front()];
 
   return cv::Point2f(out_pt.x, out_pt.y);
 }
 
 //////////////////////////////////////////////////
-std::tuple<cv::Mat, cv::Mat> compute2dDisparityResidualsAndWeights(const std::vector<cv::Point2f> &data, pcl::search::KdTree<pcl::PointXY> &template_kdtree) {
+std::tuple<cv::Mat, cv::Mat> compute2dDisparityResidualsAndWeights(
+    const std::vector<cv::Point2f> &data,
+    pcl::search::KdTree<pcl::PointXY> &templateKdTree)
+{
   cv::Mat residuals(data.size(), 1, CV_32FC1);
   cv::Mat weights(data.size(), 1, CV_32FC1);
 
   int i = 0;
   for (const auto &pt : data) {
-    auto template_pt = getNearestPoint(template_kdtree, pt);
+    auto nearestTemplatePoint = getNearestPoint(templateKdTree, pt);
 
-    float distance = cv::norm(template_pt - pt);
+    float distance = cv::norm(nearestTemplatePoint - pt);
     residuals.at<float>(i, 0) = distance * distance;
-    weights.at<float>(i, 0) = (distance <= 5); // or how do we check if point matches???
+    // or how do we check if point matches???
+    weights.at<float>(i, 0) = (distance <= 5);
 
     i++;
   }
@@ -217,84 +237,97 @@ std::tuple<cv::Mat, cv::Mat> compute2dDisparityResidualsAndWeights(const std::ve
 }
 
 //////////////////////////////////////////////////
-std::vector<cv::Point2f> projectPoints(const std::vector<cv::Point3f> &points, const ::PoseRT &pose, const ::Camera &camera) {
+std::vector<cv::Point2f> projectPoints(const std::vector<cv::Point3f> &points,
+                                       const ::PoseRT &pose,
+                                       const ::Camera &camera)
+{
   std::vector<cv::Point2f> points_2d;
-  cv::projectPoints(points, pose.rot, pose.trans, camera.matrix, camera.distortion, points_2d);
+  cv::projectPoints(points, pose.rot, pose.trans,
+      camera.matrix, camera.distortion, points_2d);
 
   return points_2d;
 }
 
 //////////////////////////////////////////////////
-cv::Vec3f projectRotationOnAxis(const cv::Vec3f &rodrigues, const cv::Vec3f &axis) {
+cv::Vec3f projectRotationOnAxis(const cv::Vec3f &rodrigues,
+                                const cv::Vec3f &axis)
+{
   // find axes rotation transformation to align object's up to plane normal
-  cv::Vec3f objects_up_local(0, 1, 0);
-  ::PoseRT object_to_camera_rotation {rodrigues, cv::Vec3f(0, 0, 0)};
-  auto objects_up_camspace = GeometryCV::transform(object_to_camera_rotation, objects_up_local);
+  cv::Vec3f objectsUpDirectionLocal(0, 1, 0);
+  ::PoseRT objectToCameraRotation{rodrigues, cv::Vec3f(0, 0, 0)};
+  auto objectsUpDirectionCamspace =
+      GeometryCV::transform(objectToCameraRotation, objectsUpDirectionLocal);
 
-  double phi = std::acos(axis.ddot(objects_up_camspace));
+  double phi = std::acos(axis.ddot(objectsUpDirectionCamspace));
 
-  cv::Vec3f up_to_n_rot_axis = objects_up_camspace.cross(axis);
-  cv::Vec3f rodrigues_up_to_n = up_to_n_rot_axis * (phi / cv::norm(up_to_n_rot_axis));
+  cv::Vec3f upToAxisRotationAxis = objectsUpDirectionCamspace.cross(axis);
+  cv::Vec3f rodriguesUpToAxis = upToAxisRotationAxis *
+                                    (phi / cv::norm(upToAxisRotationAxis));
 
-  cv::Mat up_to_n_rotation;
-  cv::Rodrigues(rodrigues_up_to_n, up_to_n_rotation);
+  cv::Mat upToAxisRotation;
+  cv::Rodrigues(rodriguesUpToAxis, upToAxisRotation);
 
 
-  cv::Mat initial_rotation;
-  cv::Rodrigues(rodrigues, initial_rotation);
-  cv::Mat final_rotation = up_to_n_rotation * initial_rotation;
+  cv::Mat initialRotation;
+  cv::Rodrigues(rodrigues, initialRotation);
+  cv::Mat finalRotation = upToAxisRotation * initialRotation;
 
   cv::Mat result;
-  cv::Rodrigues(final_rotation, result);
+  cv::Rodrigues(finalRotation, result);
 
   return result;
 }
 
 //////////////////////////////////////////////////
-::PoseRT offsetPose(const ::PoseRT &input, const int dof_id, const float offset) {
-  ::PoseRT pose_delta {{0, 0, 0}, {0, 0, 0}};
+::PoseRT offsetPose(const ::PoseRT &input, const int dofId, const float offset)
+{
+  ::PoseRT poseDelta {{0, 0, 0}, {0, 0, 0}};
 
-  switch (dof_id / 3) {
+  switch (dofId / 3) {
   case 0:
-    pose_delta.rot[dof_id] += offset;
+    poseDelta.rot[dofId] += offset;
     break;
 
   case 1:
-    pose_delta.trans[dof_id % 3] += offset;
+    poseDelta.trans[dofId % 3] += offset;
     break;
 
   default:
-    outError("Invalid dof_id: " << dof_id << ", acceptable range is [1-6]");
+    outError("Invalid dofId: " << dofId << ", acceptable range is [1-6]");
   }
 
-  return input + pose_delta;
+  return input + poseDelta;
 }
 
 //////////////////////////////////////////////////
-cv::Mat computeProximityJacobianForPoseRT(const ::PoseRT &pose, const std::vector<cv::Point3f> &points_3d, const float h, const std::vector<cv::Point2f> &template_2d, const cv::Mat &weights, const ::Camera &camera) {
+cv::Mat computeProximityJacobianForPoseRT(const ::PoseRT &pose,
+    const std::vector<cv::Point3f> &points3D, const float h,
+    const std::vector<cv::Point2f> &template2D,
+    const cv::Mat &weights, const ::Camera &camera)
+{
   size_t dof = 6;
 
-  auto template_kd = getKdTree(template_2d);
+  auto templateKdTree = getKdTree(template2D);
 
-  cv::Mat jacobian(points_3d.size(), dof, CV_32FC1);
+  cv::Mat jacobian(points3D.size(), dof, CV_32FC1);
   for (size_t j = 0; j < dof; ++j) {
-    ::PoseRT pose_h_plus  = offsetPose(pose, j, h);
-    ::PoseRT pose_h_minus = offsetPose(pose, j, -h);
+    ::PoseRT posePlusH  = offsetPose(pose, j, h);
+    ::PoseRT poseMinusH = offsetPose(pose, j, -h);
 
-    std::vector<cv::Point2f> d_plus  = projectPoints(points_3d, pose_h_plus, camera);
-    std::vector<cv::Point2f> d_minus = projectPoints(points_3d, pose_h_minus, camera);
+    std::vector<cv::Point2f> transformedPointsPlus = projectPoints(points3D, posePlusH, camera);
+    std::vector<cv::Point2f> transformedPointsMinus = projectPoints(points3D, poseMinusH, camera);
 
     #pragma omp parallel for
-    for (size_t i = 0; i < d_plus.size(); ++i) {
-      auto d_i_plus = getNearestPoint(template_kd, d_plus[i]);
-      auto d_i_minus = getNearestPoint(template_kd, d_minus[i]);
+    for (size_t i = 0; i < transformedPointsPlus.size(); ++i) {
+      auto nearestPointPlus = getNearestPoint(templateKdTree, transformedPointsPlus[i]);
+      auto nearestPointMinus = getNearestPoint(templateKdTree, transformedPointsMinus[i]);
 
-      double d1 = std::pow(cv::norm(d_i_plus - d_plus[i]), 2);
-      double d2 = std::pow(cv::norm(d_i_minus - d_minus[i]), 2);
+      double d1 = std::pow(cv::norm(nearestPointPlus - transformedPointsPlus[i]), 2);
+      double d2 = std::pow(cv::norm(nearestPointMinus - transformedPointsMinus[i]), 2);
 
-      float dei_daj = weights.at<float>(i) * (d1 - d2) / (2 * h);
+      float dEi_dAj = weights.at<float>(i) * (d1 - d2) / (2 * h);
 
-      jacobian.at<float>(i, j) = dei_daj;
+      jacobian.at<float>(i, j) = dEi_dAj;
     }
   }
 
@@ -302,31 +335,36 @@ cv::Mat computeProximityJacobianForPoseRT(const ::PoseRT &pose, const std::vecto
 }
 
 //////////////////////////////////////////////////
-std::tuple<::PoseRT, double, cv::Mat> fit2d3d(const std::vector<cv::Point3f> &points, const ::PoseRT &init_pose,
-    const std::vector<cv::Point2f> &template_2d, const ::Camera &camera, const size_t iterations_limit, cv::Vec3f normal_constraint) {
-  ::PoseRT current_pose = init_pose;
-  float learning_rate = 2;
-  double limit_epsilon = 1e-5;
-  size_t iterations_left = iterations_limit;
-  size_t stall_counter = 0;
+std::tuple<::PoseRT, double, cv::Mat> fit2d3d(
+    const std::vector<cv::Point3f> &points, const ::PoseRT &init_pose,
+    const std::vector<cv::Point2f> &template2D, const ::Camera &camera,
+    const size_t iterationsLimit, cv::Vec3f normalConstraint)
+{
+  ::PoseRT currentPose = init_pose;
+  float learningRate = 2;
+  double limitEpsilon = 1e-5;
+  size_t iterationsLeft = iterationsLimit;
+  size_t stallCounter = 0;
   double h = 1e-3;
 
-  double last_error = 0;
+  double lastError = 0;
   cv::Mat jacobian;
 
-  auto template_kdtree = getKdTree(template_2d);
+  auto templateKdTree = getKdTree(template2D);
 
   bool done {false};
-  while (!done && iterations_left) {
+  while (!done && iterationsLeft) {
 
-    std::vector<cv::Point2f> sil_2d = projectPoints(points, current_pose, camera);
+    std::vector<cv::Point2f> projectedPoints =
+        projectPoints(points, currentPose, camera);
 
     cv::Mat residuals;
     cv::Mat weights;
-    std::tie(residuals, weights) = compute2dDisparityResidualsAndWeights(sil_2d, template_kdtree);
+    std::tie(residuals, weights) =
+        compute2dDisparityResidualsAndWeights(projectedPoints, templateKdTree);
 
-    double num {0};
-    double sum {0};
+    double num{0};
+    double sum{0};
     for (int i = 0; i < residuals.rows; ++i) {
       if (residuals.at<float>(i) < 0.9f) {
         sum += residuals.at<float>(i);
@@ -334,97 +372,108 @@ std::tuple<::PoseRT, double, cv::Mat> fit2d3d(const std::vector<cv::Point3f> &po
       }
     }
 
-    double ref_error = std::numeric_limits<double>::max();
+    double currentError = std::numeric_limits<double>::max();
     if (num != 0)
-      ref_error = std::sqrt(sum) / num;
+      currentError = std::sqrt(sum) / num;
     else {
       outInfo("Something's wrong - the original pose if too far from desired");
       break;
     }
 
-    outInfo("ref_error: " << ref_error << " (" << num << "/" << weights.rows << ")") ;
+    // outInfo("currentError: " << currentError
+    //                          << " (" << num << "/" << weights.rows << ")") ;
 
-    if (std::abs(last_error - ref_error) < limit_epsilon) {
-      if (stall_counter == 5) {
+    if (std::abs(lastError - currentError) < limitEpsilon) {
+      if (stallCounter == 5) {
         outInfo("Done");
         done = true;
       }
-      stall_counter++;
+      stallCounter++;
     }
     else
-      stall_counter = 0;
+      stallCounter = 0;
 
-    last_error = ref_error;
+    lastError = currentError;
 
-    jacobian = computeProximityJacobianForPoseRT(current_pose, points, h, template_2d, weights, camera);
+    jacobian = computeProximityJacobianForPoseRT(currentPose, points, h,
+                                                 template2D, weights, camera);
     if (cv::countNonZero(jacobian) == 0 || cv::sum(weights)[0] == 0) {
       outInfo("Already at best approximation, or `h` is too small");
-      ref_error = cv::norm(residuals, cv::NORM_L2);
+      currentError = cv::norm(residuals, cv::NORM_L2);
       break;
     }
     // jacobian = jacobian / cv::norm(jacobian, cv::NORM_INF);
     // outInfo("Jacobian: " << jacobian);
 
-    cv::Mat delta_pose_mat;
-    cv::solve(jacobian, residuals, delta_pose_mat, cv::DECOMP_SVD);
+    cv::Mat deltaPoseMat;
+    cv::solve(jacobian, residuals, deltaPoseMat, cv::DECOMP_SVD);
 
-    ::PoseRT delta_pose;
-    delta_pose.rot = cv::Vec3f(delta_pose_mat.at<float>(0), delta_pose_mat.at<float>(1), delta_pose_mat.at<float>(2));
-    delta_pose.trans = cv::Vec3f(delta_pose_mat.at<float>(3), delta_pose_mat.at<float>(4), delta_pose_mat.at<float>(5));
+    ::PoseRT deltaPoseRT;
+    deltaPoseRT.rot = cv::Vec3f(deltaPoseMat.at<float>(0),
+                                deltaPoseMat.at<float>(1),
+                                deltaPoseMat.at<float>(2));
+    deltaPoseRT.trans = cv::Vec3f(deltaPoseMat.at<float>(3),
+                                  deltaPoseMat.at<float>(4),
+                                  deltaPoseMat.at<float>(5));
 
-
-    current_pose = current_pose + (-1 * learning_rate) * delta_pose;
+    currentPose = currentPose + (-1 * learningRate) * deltaPoseRT;
 
     // apply up-direction constraint if present
-    if (cv::norm(normal_constraint) > 0.1)
-      current_pose.rot = projectRotationOnAxis(current_pose.rot, normal_constraint);
+    if (cv::norm(normalConstraint) > 0.1)
+    {
+      currentPose.rot = projectRotationOnAxis(currentPose.rot,
+                                              normalConstraint);
+    }
 
-    --iterations_left;
+    --iterationsLeft;
   }
 
-  return std::tie(current_pose, last_error, jacobian);
+  return std::tie(currentPose, lastError, jacobian);
 }
 
 //////////////////////////////////////////////////
-std::tuple<double, double> getChamferDistance(std::vector<cv::Point2f> &a, std::vector<cv::Point2f> &b, cv::Size work_area, cv::Mat &dist_transform) {
-  double distance_sum = 0;
-  size_t num_points_hit = 0;
+std::tuple<double, double> getChamferDistance(const std::vector<cv::Point2f> &a,
+                                              const std::vector<cv::Point2f> &b,
+                                              const cv::Size workArea,
+                                              cv::Mat &distanceTransform)
+{
+  double distancesSum = 0;
+  size_t numberOfPointsInWorkArea = 0;
 
-  if (dist_transform.empty()) {
-    cv::Mat sil_map_b = cv::Mat::ones(work_area, CV_8UC1);
-    for (auto it = b.begin(); it != std::prev(b.end()); it = std::next(it))
-      cv::line(sil_map_b, *it, *std::next(it), cv::Scalar(0));
-    cv::line(sil_map_b, b.back(), b.front(), cv::Scalar(0));
+  if (distanceTransform.empty()) {
+    cv::Mat silhouetteOfPointsB = cv::Mat::ones(workArea, CV_8UC1);
+    for (auto it = b.cbegin(); it != std::prev(b.cend()); it = std::next(it))
+      cv::line(silhouetteOfPointsB, *it, *std::next(it), cv::Scalar(0));
+    cv::line(silhouetteOfPointsB, b.back(), b.front(), cv::Scalar(0));
 
     // auto rect_a = ::getBoundingRect(a);
     // auto rect_b = ::getBoundingRect(b);
-    // cv::Rect roi = (rect_a | rect_b) & cv::Rect_<float>(cv::Point(0, 0), work_area);
+    // cv::Rect roi =
+    //     (rect_a | rect_b) & cv::Rect_<float>(cv::Point(0, 0), workArea);
 
-    dist_transform = cv::Mat(sil_map_b.size(), CV_32FC1, cv::Scalar(0.f));
-    // cv::distanceTransform(sil_map_b(roi), dist_transform(roi), CV_DIST_L2, 3);
-    cv::distanceTransform(sil_map_b, dist_transform, CV_DIST_L2, 3);
-
-    cv::imwrite("/tmp/dt.png", dist_transform);
+    distanceTransform = cv::Mat::zeros(silhouetteOfPointsB.size(), CV_32FC1);
+    // cv::distanceTransform(silhouetteOfPointsB(roi), distanceTransform(roi),
+    //                       CV_DIST_L2, 3);
+    cv::distanceTransform(silhouetteOfPointsB, distanceTransform,
+                          CV_DIST_L2, 3);
   }
 
-  auto work_rect = cv::Rect(cv::Point(0, 0), work_area);
+  auto workRect = cv::Rect(cv::Point(0, 0), workArea);
   for (const auto &pt : a) {
     auto pti = cv::Point(pt.x, pt.y);
-    if (work_rect.contains(pti)) {
-      distance_sum += dist_transform.at<float>(pti);
-      num_points_hit += 1;
+    if (workRect.contains(pti)) {
+      distancesSum += distanceTransform.at<float>(pti);
+      numberOfPointsInWorkArea += 1;
     }
   }
 
-  double confidence = static_cast<double>(num_points_hit) / a.size();
-
   double distance;
+  double confidence = static_cast<double>(numberOfPointsInWorkArea) / a.size();
 
-  // outInfo("distance_sum " << distance_sum/num_points_hit);
   if (confidence != 0)
-    distance = distance_sum / num_points_hit;
+    distance = distancesSum / numberOfPointsInWorkArea;
   else {
-    outWarn("input contour is too large or contains no points");
+    outWarn("Input contour is too large or contains no points");
     distance = std::numeric_limits<double>::max();
   }
 
@@ -432,31 +481,34 @@ std::tuple<double, double> getChamferDistance(std::vector<cv::Point2f> &a, std::
 }
 
 //////////////////////////////////////////////////
-std::vector<cv::Point2f> normalizePoints(const std::vector<cv::Point2f> &pts) {
+std::vector<cv::Point2f> normalizePoints(const std::vector<cv::Point2f> &points)
+{
   std::vector<cv::Point2f> result;
-  for (const auto &pt : pts)
+  for (const auto &pt : points)
     result.push_back(pt);
 
-  cv::Point2f mean = std::accumulate(pts.cbegin(), pts.cend(), cv::Point2f());
-  mean *= (1.f / pts.size());
+  auto mean = std::accumulate(points.cbegin(), points.cend(), cv::Point2f());
+  mean *= (1.f / points.size());
 
-  float std_dev = 0;
+  float stdDev = 0;
 
   for (auto &pt : result) {
     pt = pt - mean;
-    std_dev += std::pow(cv::norm(pt), 2);
+    stdDev += std::pow(cv::norm(pt), 2);
   }
 
-  std_dev = std::sqrt(std_dev / pts.size());
+  stdDev = std::sqrt(stdDev / points.size());
 
   for (auto &pt : result)
-    pt *= 1.f / std_dev;
+    pt *= 1.f / stdDev;
 
   return result;
 }
 
 //////////////////////////////////////////////////
-void vectorToPointCloud(const std::vector<cv::Point2f> &points, pcl::PointCloud<pcl::PointXYZ> &pc) {
+void vectorToPointCloud(const std::vector<cv::Point2f> &points,
+    pcl::PointCloud<pcl::PointXYZ> &pc)
+{
   pc.width = points.size();
   pc.height = 1;
   pc.is_dense = false;
@@ -469,7 +521,9 @@ void vectorToPointCloud(const std::vector<cv::Point2f> &points, pcl::PointCloud<
 }
 
 //////////////////////////////////////////////////
-void pointCloudToVector(pcl::PointCloud<pcl::PointXYZ> &pc, std::vector<cv::Point2f> &points) {
+void pointCloudToVector(pcl::PointCloud<pcl::PointXYZ> &pc,
+    std::vector<cv::Point2f> &points)
+{
   points.clear();
 
   assert(pc.height == 1);
@@ -480,81 +534,100 @@ void pointCloudToVector(pcl::PointCloud<pcl::PointXYZ> &pc, std::vector<cv::Poin
 }
 
 //////////////////////////////////////////////////
-std::tuple<cv::Mat, double> fitICP(const std::vector<cv::Point2f> &test, const std::vector<cv::Point2f> &model) {
-  pcl::PointCloud<pcl::PointXYZ>::Ptr cl_test(new pcl::PointCloud<pcl::PointXYZ>);
-  pcl::PointCloud<pcl::PointXYZ>::Ptr cl_model(new pcl::PointCloud<pcl::PointXYZ>);
+std::tuple<cv::Mat, double> fitICP(const std::vector<cv::Point2f> &test,
+    const std::vector<cv::Point2f> &model) {
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloudTest{
+      new pcl::PointCloud<pcl::PointXYZ>};
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloudModel{
+      new pcl::PointCloud<pcl::PointXYZ>};
 
-  vectorToPointCloud(test, *cl_test);
-  vectorToPointCloud(model, *cl_model);
+  vectorToPointCloud(test, *cloudTest);
+  vectorToPointCloud(model, *cloudModel);
 
   pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
-  icp.setInputSource(cl_test);
-  icp.setInputTarget(cl_model);
+  icp.setInputSource(cloudTest);
+  icp.setInputTarget(cloudModel);
 
-  pcl::PointCloud<pcl::PointXYZ> cl_result;
+  pcl::PointCloud<pcl::PointXYZ> cloudResult;
 
-  icp.align(cl_result);
+  icp.align(cloudResult);
 
   assert(icp.hasConverged());
 
   double score = icp.getFitnessScore();
 
 
-  Eigen::Matrix4f eig_trf = icp.getFinalTransformation ();
+  Eigen::Matrix4f eigenTransformationMat = icp.getFinalTransformation ();
 
-  cv::Mat cv_trf(3, 3, CV_32FC1, cv::Scalar(0.f));
-  cv_trf.at<float>(0, 0) = eig_trf(0, 0);
-  cv_trf.at<float>(0, 1) = eig_trf(0, 1);
-  cv_trf.at<float>(1, 0) = eig_trf(1, 0);
-  cv_trf.at<float>(1, 1) = eig_trf(1, 1);
+  cv::Mat cvTransformationMat(3, 3, CV_32FC1, cv::Scalar(0.f));
+  cvTransformationMat.at<float>(0, 0) = eigenTransformationMat(0, 0);
+  cvTransformationMat.at<float>(0, 1) = eigenTransformationMat(0, 1);
+  cvTransformationMat.at<float>(1, 0) = eigenTransformationMat(1, 0);
+  cvTransformationMat.at<float>(1, 1) = eigenTransformationMat(1, 1);
 
   // assume that translation is small enough
-  cv_trf.at<float>(0, 2) = 0; //eig_trf(0, 3);
-  cv_trf.at<float>(1, 2) = 0; //eig_trf(1, 3);
-  cv_trf.at<float>(2, 2) = 1.f;
+  cvTransformationMat.at<float>(0, 2) = 0; //eigenTransformationMat(0, 3);
+  cvTransformationMat.at<float>(1, 2) = 0; //eigenTransformationMat(1, 3);
+  cvTransformationMat.at<float>(2, 2) = 1.f;
 
-  return std::tie(cv_trf, score);
+  return std::tie(cvTransformationMat, score);
 }
 
 //////////////////////////////////////////////////
-std::tuple<cv::Vec2f, float> getMeanAndStdDev(const std::vector<cv::Point2f> &pts) {
-  cv::Point2f mean = std::accumulate(pts.cbegin(), pts.cend(), cv::Point2f());
-  mean *= (1.f / pts.size());
+std::tuple<cv::Vec2f, float> getMeanAndStdDev(
+  const std::vector<cv::Point2f> &points)
+{
+  cv::Point2f mean = std::accumulate(points.cbegin(), points.cend(),
+                                     cv::Point2f());
+  mean *= (1.f / points.size());
 
-  float std_dev = 0;
-  for (auto &pt : pts)
-    std_dev += std::pow(cv::norm(cv::Point2f(pt.x, pt.y) - mean), 2);
+  float stdDev = 0;
+  for (auto &pt : points)
+    stdDev += std::pow(cv::norm(cv::Point2f(pt.x, pt.y) - mean), 2);
 
-  std_dev = std::sqrt(std_dev / pts.size());
+  stdDev = std::sqrt(stdDev / points.size());
 
-  return std::tie(mean, std_dev);
+  return std::tie(mean, stdDev);
 }
 
 //////////////////////////////////////////////////
-std::tuple<cv::Mat, double> fitProcrustes2d(const std::vector<cv::Point2f> &pts, const std::vector<cv::Point2f> &tmplt) {
-  cv::Vec2f mean_s, mean_t;
-  float deviation_s, deviation_t;
+std::tuple<cv::Mat, double> fitProcrustes2d(
+    const std::vector<cv::Point2f> &points,
+    const std::vector<cv::Point2f> &templatePoints)
+{
+  cv::Vec2f pointsMean, templatesMean;
+  float pointsDeviation, templatesDeviation;
 
   // FIXME: avoid double mean/deviation computation
-  std::tie(mean_s, deviation_s) = getMeanAndStdDev(pts);
-  std::tie(mean_t, deviation_t) = getMeanAndStdDev(tmplt);
+  std::tie(pointsMean, pointsDeviation) = getMeanAndStdDev(points);
+  std::tie(templatesMean, templatesDeviation) =
+      getMeanAndStdDev(templatePoints);
 
-  auto ns = normalizePoints(pts);
-  auto nt = normalizePoints(tmplt);
+  auto normalizedPointsSet = normalizePoints(points);
+  auto normalizetTemplateSet = normalizePoints(templatePoints);
 
-  cv::Mat icp_mat;
+  cv::Mat icpRotationMat;
   double fitness;
-  std::tie(icp_mat, fitness) = fitICP(ns, nt);
+  std::tie(icpRotationMat, fitness) = fitICP(normalizedPointsSet,
+                                             normalizetTemplateSet);
 
-  cv::Mat Ts_inv = (cv::Mat_<float>(3, 3) << 1, 0, -mean_s(0), 0, 1, -mean_s(1), 0 , 0, 1);
-  cv::Mat Ss_inv = (cv::Mat_<float>(3, 3) << 1/deviation_s, 0, 0, 0, 1/deviation_s, 0, 0 , 0, 1);
-  cv::Mat Rst = icp_mat;
-  cv::Mat St = (cv::Mat_<float>(3, 3) << deviation_t, 0, 0, 0, deviation_t, 0, 0 , 0, 1);
-  cv::Mat Tt = (cv::Mat_<float>(3, 3) << 1, 0, mean_t(0), 0, 1, mean_t(1), 0 , 0, 1);
+  cv::Mat Ts_inv = (cv::Mat_<float>(3, 3) << 1, 0, -pointsMean(0),
+                                             0, 1, -pointsMean(1),
+                                             0, 0, 1);
+  cv::Mat Ss_inv = (cv::Mat_<float>(3, 3) << 1/pointsDeviation, 0, 0,
+                                             0, 1/pointsDeviation, 0,
+                                             0, 0, 1);
+  cv::Mat Rst = icpRotationMat;
+  cv::Mat St = (cv::Mat_<float>(3, 3) << templatesDeviation, 0, 0,
+                                         0, templatesDeviation, 0,
+                                         0 , 0, 1);
+  cv::Mat Tt = (cv::Mat_<float>(3, 3) << 1, 0, templatesMean(0),
+                                         0, 1, templatesMean(1),
+                                         0 , 0, 1);
 
-  cv::Mat sil_to_tmplt_transformation = Tt * St * Rst * Ss_inv * Ts_inv;
+  cv::Mat pointsToTemplateTransformationMat = Tt * St * Rst * Ss_inv * Ts_inv;
 
-  return std::tie(sil_to_tmplt_transformation, fitness);
+  return std::tie(pointsToTemplateTransformationMat, fitness);
 }
 
 }
