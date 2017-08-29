@@ -601,7 +601,7 @@ TyErrorId ContourFittingClassifier::processWithLock(CAS &tcas, ResultSpecificati
       this->segments.push_back(i_segment);
       this->labels.push_back(top_hypotheses[0].getClass());
 
-      this->drawHypothesisToCAS(cas, cas_image_depth, view_cloud, top_hypotheses[0], this->camera);
+      this->drawHypothesisToCAS(tcas, cas_image_depth, view_cloud, top_hypotheses[0], this->camera);
     }
 
     // cv::imwrite("/tmp/color.png", cas_image_rgb);
@@ -718,7 +718,9 @@ void ContourFittingClassifier::fillVisualizerWithLock(pcl::visualization::PCLVis
 }
 
 //////////////////////////////////////////////////
-void ContourFittingClassifier::drawHypothesisToCAS(rs::SceneCas &cas, cv::Mat &cas_image_depth, pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cas_view_cloud, const ::PoseHypothesis &hypothesis, const ::Camera &camera) {
+void ContourFittingClassifier::drawHypothesisToCAS(CAS &tcas, cv::Mat &cas_image_depth, pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cas_view_cloud, const ::PoseHypothesis &hypothesis, const ::Camera &camera) {
+  rs::SceneCas cas(tcas);
+
   auto &mesh = this->edge_models[hypothesis.getClass()].mesh;
 
   cv::Mat depth_map = cv::Mat::ones(cas_image_depth.size(), CV_32FC1) * Drawing::max_depth_32f;
@@ -754,6 +756,73 @@ void ContourFittingClassifier::drawHypothesisToCAS(rs::SceneCas &cas, cv::Mat &c
   }
 
   outInfo("PC updated with " << counter << " points");
+
+  {
+    rs::Scene scene = cas.getScene();
+
+    std::stringstream sstr;
+
+    rs::Classification rsClassification  = rs::create<rs::Classification>(tcas);
+    rsClassification.classification_type.set("");
+    rsClassification.classname.set(hypothesis.getClass());
+    rsClassification.featurename.set("outer silhouette and canny edges");
+    rsClassification.classifier.set("NearestNeighbor");
+
+    sstr << "rotationAngleSamples: " << this->rotation_angle_samples << ";"
+     << "rotationAxisSamples: " << this->rotation_axis_samples << ";"
+     << "footprintImageSize: " << this->footprint_image_size << ";"
+     << "rejectScoreLevel: " << this->rejectScoreLevel << ";"
+     << "normalizedAcceptScoreLevel: " << this->normalizedAcceptScoreLevel << ";"
+     << "performICPPoseRefinement: " << this->performICPPoseRefinement << ";"
+     << "icp2d3dIterationsLimit: " << this->icp2d3dIterationsLimit << ";"
+     << "applySupportPlaneAssumption: " << this->applySupportPlaneAssumption << ";";
+    rsClassification.parameters.set(sstr.str());
+
+    sstr.clear();
+    sstr.str(std::string());
+    for (const auto &em : this->edge_models)
+      sstr << em.first << ";";
+    rsClassification.model.set(sstr.str());
+
+    rs::ClassConfidence rsClassConfidence = rs::create<rs::ClassConfidence>(tcas);
+    rsClassConfidence.name.set(hypothesis.getClass());
+    rsClassConfidence.score.set(1.f); // FIXME
+    rsClassification.confidences.append(rsClassConfidence);
+
+    // FIXME: annotate cluster
+    scene.identifiables.append(rsClassification);
+
+    // Submit pose
+    tf::Matrix3x3 rot;
+    tf::Vector3 trans;
+
+    cv::Mat cvRot;
+    cv::Rodrigues(hypothesis.pose.rot, cvRot);
+
+    rot.setValue(cvRot.at<float>(0),
+                 cvRot.at<float>(1),
+                 cvRot.at<float>(2),
+                 cvRot.at<float>(3),
+                 cvRot.at<float>(4),
+                 cvRot.at<float>(5),
+                 cvRot.at<float>(6),
+                 cvRot.at<float>(7),
+                 cvRot.at<float>(8));
+    trans.setValue(hypothesis.pose.trans(0),
+                   hypothesis.pose.trans(1),
+                   hypothesis.pose.trans(2));
+
+    std::string frameId("idk");
+    auto tfStampedPose = tf::Stamped<tf::Pose>(tf::Pose(rot, trans),
+        ros::Time(/*pose.timestamp.get()*/0 / 1000000000, /*pose.timestamp.get()*/0 % 1000000000),
+        frameId);
+
+    rs::PoseAnnotation rsPoseAnnotation = rs::create<rs::PoseAnnotation>(tcas);
+    rsPoseAnnotation.camera.set(rs::conversion::to(tcas, tfStampedPose));
+
+    // FIXME: annotate cluster
+    scene.identifiables.append(rsPoseAnnotation);
+  }
 
   cas.set(VIEW_DEPTH_IMAGE, cas_image_depth);
   cas.set(VIEW_CLOUD, *cas_view_cloud);

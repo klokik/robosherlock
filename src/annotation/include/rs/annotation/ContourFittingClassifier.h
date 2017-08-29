@@ -209,12 +209,12 @@ class ContourFittingClassifier : public DrawingAnnotator
   protected: void fillVisualizerWithLock(pcl::visualization::PCLVisualizer &visualizer, const bool firstRun);
 
   /// \brief Write successfully classified hypothesis information to CAS
-  /// \param[in,out] cas              SceneCAS
+  /// \param[in,out] tcas             CAS
   /// \param[in,out] cas_image_depth  Depth map to repair and write to CAS
   /// \param[in,out] cas_view_cloud   PCL cloud to repair and write to CAS
   /// \param[in]     hypothesis       Hupothesis being writed
   /// \param[in]     camera           Camera used to capture CAS image data
-  protected: void drawHypothesisToCAS(rs::SceneCas &cas, cv::Mat &cas_image_depth, pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cas_view_cloud, const ::PoseHypothesis &hypothesis, const ::Camera &camera);
+  protected: void drawHypothesisToCAS(CAS &tcas, cv::Mat &cas_image_depth, pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cas_view_cloud, const ::PoseHypothesis &hypothesis, const ::Camera &camera);
 
   /// \brief Orients mesh that way, that it's top ditection is orthogonal to support plane, and the origin point of mesh is in plane
   /// \param[in] initial_pose           Initial mesh pose
