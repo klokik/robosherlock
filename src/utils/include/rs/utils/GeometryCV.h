@@ -40,7 +40,8 @@
 
 /// \struct PoseRT GeometryCV.h
 /// \brief Rigid 3d transformation presented as rodrigues and translation vector
-struct PoseRT {
+struct PoseRT
+{
   /// \brief Rotation rodrigues vector
   cv::Vec3f rot;
 
@@ -50,7 +51,8 @@ struct PoseRT {
 
 // \class Camera GeometryCV.h
 /// \brief Camera model
-class Camera {
+class Camera
+{
   /// \brief 3x3 camera matrix
   public: cv::Mat matrix = cv::Mat::eye(3, 3, CV_32FC1);
 
@@ -64,7 +66,8 @@ class Camera {
 
 /// \namespace GeometryCV GeometryCV.h
 /// \brief Contains various geometry functions based on OpenCV primitives
-namespace GeometryCV {
+namespace GeometryCV
+{
   /// \brief Convert ::PoseRT to cv::Mat representation
   /// \param[in] pose Input pose
   /// \return         Affine transformation 3x4 matrix
@@ -73,7 +76,8 @@ namespace GeometryCV {
   /// \brief Per-component pose addition
   /// \param[in] a  First addendum
   /// \param[in] b  Second addendum
-  inline ::PoseRT operator+(const ::PoseRT &a, const ::PoseRT &b) {
+  inline ::PoseRT operator+(const ::PoseRT &a, const ::PoseRT &b)
+  {
     ::PoseRT result;
 
     result.rot = a.rot + b.rot;
@@ -88,7 +92,8 @@ namespace GeometryCV {
   /// \return       Scaled pose
   ///   Translation is scaled along translation vector,
   ///   rotation angle is scaled along the same axis
-  inline ::PoseRT operator*(const double a, const ::PoseRT &b) {
+  inline ::PoseRT operator*(const double a, const ::PoseRT &b)
+  {
     ::PoseRT result;
 
     result.rot = b.rot * a;
